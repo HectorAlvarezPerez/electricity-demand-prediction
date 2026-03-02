@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Data (Ignore large dataset files to prevent pushing them to GitHub)
+data/raw/*
+data/interim/*
+data/processed/*
+*.csv
+*.xlsx
+*.parquet
+*.h5
+*.sqlite
+*.db
+
+# MLFlow
+mlruns/
+mlflow.db
+
+# macOS
+.DS_Store
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
