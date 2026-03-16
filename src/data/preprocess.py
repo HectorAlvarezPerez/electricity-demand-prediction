@@ -49,22 +49,44 @@ def _load_country_demand(demand_dir: Path, code: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Temporal features
 # ---------------------------------------------------------------------------
-def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Afegeix features temporals cícliques i is_weekend al DataFrame.
+# Mapping of countries to their respective timezones
+COUNTRY_TIMEZONES = {
+    "ES": "Europe/Madrid",
+    "BE": "Europe/Brussels",
+    "DE": "Europe/Berlin",
+    "FR": "Europe/Paris",
+    "GR": "Europe/Athens",
+    "IT": "Europe/Rome",
+    "NL": "Europe/Amsterdam",
+    "PT": "Europe/Lisbon"
+}
 
-    Espera que el DataFrame tingui un DatetimeIndex (amb o sense timezone).
+def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Afegeix features temporals cícliques i is_weekend al DataFrame
+    per a cadascun dels països, respectant la seva zona horària local (DST inclòs).
+
+    Espera que el DataFrame tingui un DatetimeIndex (amb timezone UTC).
     Retorna una còpia sense modificar l'original.
     """
     df = df.copy()
     idx = df.index
+    
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
 
-    df["hour_sin"] = np.sin(2 * np.pi * idx.hour / 24)
-    df["hour_cos"] = np.cos(2 * np.pi * idx.hour / 24)
-    df["dow_sin"] = np.sin(2 * np.pi * idx.dayofweek / 7)
-    df["dow_cos"] = np.cos(2 * np.pi * idx.dayofweek / 7)
-    df["month_sin"] = np.sin(2 * np.pi * (idx.month - 1) / 12)
-    df["month_cos"] = np.cos(2 * np.pi * (idx.month - 1) / 12)
-    df["is_weekend"] = (idx.dayofweek >= 5).astype(int)
+    for code, tz_name in COUNTRY_TIMEZONES.items():
+        # Convert index to local timezone to capture daylight saving times properly
+        idx_local = idx.tz_convert(tz_name)
+        
+        prefix = f"{code.lower()}_"
+        
+        df[f"{prefix}hour_sin"] = np.sin(2 * np.pi * idx_local.hour / 24)
+        df[f"{prefix}hour_cos"] = np.cos(2 * np.pi * idx_local.hour / 24)
+        df[f"{prefix}dow_sin"] = np.sin(2 * np.pi * idx_local.dayofweek / 7)
+        df[f"{prefix}dow_cos"] = np.cos(2 * np.pi * idx_local.dayofweek / 7)
+        df[f"{prefix}month_sin"] = np.sin(2 * np.pi * (idx_local.month - 1) / 12)
+        df[f"{prefix}month_cos"] = np.cos(2 * np.pi * (idx_local.month - 1) / 12)
+        df[f"{prefix}is_weekend"] = (idx_local.dayofweek >= 5).astype(int)
 
     return df
 
