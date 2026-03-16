@@ -39,3 +39,6 @@ mlflow.db
 
 output/
 AGENTS.md
+docs/
+results/
+saved_models/
