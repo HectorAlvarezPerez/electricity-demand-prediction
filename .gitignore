@@ -35,3 +35,7 @@ mlflow.db
 .vscode/
 .idea/
 *.swp
+
+
+output/
+AGENTS.md
