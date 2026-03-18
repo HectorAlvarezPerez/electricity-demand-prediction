@@ -1,15 +1,16 @@
 """
-Training loop per a models de predicció de demanda elèctrica.
+Training loop for the tabular explicit-lag forecasting pipeline.
 
-Ús:
-    python src/train.py                        # defaults (MLP, target_es, 168→24)
-    python src/train.py --pred_len 48          # 48h ahead
-    python src/train.py --epochs 50 --lr 5e-4  # custom
+Default behaviour:
+  - train/validate on source domains
+  - evaluate zero-shot on the target domain (ES)
 """
 from __future__ import annotations
 
 import argparse
+import json
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -18,16 +19,16 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 
-from src.data.dataset import ElectricityDemandDataset
-from src.data.preprocess import normalize_data
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.data.dataset import create_dataloader
+from src.data.preprocess import feature_columns, normalize_data, target_columns
 from src.models.mlp_baseline import MLPBaseline
 
 
-# ---------------------------------------------------------------------------
-# Reproducibility
-# ---------------------------------------------------------------------------
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -37,18 +38,11 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-def compute_metrics(
-    preds: np.ndarray, targets: np.ndarray
-) -> dict[str, float]:
-    """MAE, RMSE, MAPE sobre arrays 1-D o 2-D flatten."""
+def compute_metrics(preds: np.ndarray, targets: np.ndarray) -> dict[str, float]:
     preds = preds.flatten()
     targets = targets.flatten()
     mae = float(np.mean(np.abs(preds - targets)))
     rmse = float(np.sqrt(np.mean((preds - targets) ** 2)))
-    # MAPE: evita div/0 amb mask
     mask = np.abs(targets) > 1e-3
     if mask.sum() > 0:
         mape = float(np.mean(np.abs((preds[mask] - targets[mask]) / targets[mask])) * 100)
@@ -57,48 +51,115 @@ def compute_metrics(
     return {"mae": mae, "rmse": rmse, "mape": mape}
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
 def load_split(path: Path) -> pd.DataFrame:
-    df = pd.read_parquet(path)
-    return df
+    return pd.read_parquet(path)
+
+
+def split_for_roles(df: pd.DataFrame, roles: set[str]) -> pd.DataFrame:
+    return df[df["role"].isin(roles)].reset_index(drop=True)
+
+
+def scale_frames(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_cols: list[str],
+    target_cols: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, dict]:
+    train = train_df.copy()
+    val = val_df.copy()
+    test = test_df.copy()
+
+    train_features, feature_params = normalize_data(train[feature_cols], method="standard")
+    val_features, _ = normalize_data(val[feature_cols], method="standard", params=feature_params)
+    test_features, _ = normalize_data(test[feature_cols], method="standard", params=feature_params)
+
+    train_targets, target_params = normalize_data(train[target_cols], method="standard")
+    val_targets, _ = normalize_data(val[target_cols], method="standard", params=target_params)
+    test_targets, _ = normalize_data(test[target_cols], method="standard", params=target_params)
+
+    train[feature_cols] = train_features
+    val[feature_cols] = val_features
+    test[feature_cols] = test_features
+    train[target_cols] = train_targets
+    val[target_cols] = val_targets
+    test[target_cols] = test_targets
+    return train, val, test, feature_params, target_params
 
 
 def build_loaders(
     root: Path,
-    seq_len: int,
+    *,
     pred_len: int,
-    target_col: str,
     batch_size: int,
-) -> tuple[DataLoader, DataLoader, DataLoader, dict]:
-    """Carrega parquets, normalitza amb stats de train, crea DataLoaders."""
-    train_df = load_split(root / "data" / "processed" / "train.parquet")
-    val_df = load_split(root / "data" / "processed" / "val.parquet")
-    test_df = load_split(root / "data" / "processed" / "test.parquet")
+    include_temporal: bool,
+    include_weather: bool,
+    include_country_id: bool,
+) -> tuple:
+    data_dir = root / "data" / "processed_long"
+    train_all = load_split(data_dir / "train.parquet")
+    val_all = load_split(data_dir / "val.parquet")
+    test_all = load_split(data_dir / "test.parquet")
 
-    # Normalitzar amb stats de train (evita data leakage)
-    train_df, scaler_params = normalize_data(train_df, method="standard")
-    val_df, _ = normalize_data(val_df, method="standard", params=scaler_params)
-    test_df, _ = normalize_data(test_df, method="standard", params=scaler_params)
+    train_df = split_for_roles(train_all, {"source"})
+    source_val_df = split_for_roles(val_all, {"source"})
+    source_test_df = split_for_roles(test_all, {"source"})
+    target_val_df = split_for_roles(val_all, {"target"})
+    target_test_df = split_for_roles(test_all, {"target"})
 
-    train_ds = ElectricityDemandDataset(train_df, seq_len, pred_len, target_col)
-    val_ds = ElectricityDemandDataset(val_df, seq_len, pred_len, target_col)
-    test_ds = ElectricityDemandDataset(test_df, seq_len, pred_len, target_col)
+    y_cols = target_columns(pred_len)
+    x_cols = feature_columns(
+        train_df,
+        include_temporal=include_temporal,
+        include_weather=include_weather,
+        include_country_id=include_country_id,
+    )
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+    (
+        train_df,
+        source_val_df,
+        source_test_df,
+        feature_params,
+        target_params,
+    ) = scale_frames(
+        train_df,
+        source_val_df,
+        source_test_df,
+        x_cols,
+        y_cols,
+    )
+    target_val_df = target_val_df.copy()
+    target_test_df = target_test_df.copy()
+    target_val_features, _ = normalize_data(target_val_df[x_cols], method="standard", params=feature_params)
+    target_test_features, _ = normalize_data(target_test_df[x_cols], method="standard", params=feature_params)
+    target_val_targets, _ = normalize_data(target_val_df[y_cols], method="standard", params=target_params)
+    target_test_targets, _ = normalize_data(target_test_df[y_cols], method="standard", params=target_params)
+    target_val_df[x_cols] = target_val_features
+    target_test_df[x_cols] = target_test_features
+    target_val_df[y_cols] = target_val_targets
+    target_test_df[y_cols] = target_test_targets
 
-    return train_loader, val_loader, test_loader, scaler_params
+    train_loader = create_dataloader(train_df, x_cols, y_cols, batch_size=batch_size, shuffle=True)
+    source_val_loader = create_dataloader(source_val_df, x_cols, y_cols, batch_size=batch_size, shuffle=False)
+    source_test_loader = create_dataloader(source_test_df, x_cols, y_cols, batch_size=batch_size, shuffle=False)
+    target_val_loader = create_dataloader(target_val_df, x_cols, y_cols, batch_size=batch_size, shuffle=False)
+    target_test_loader = create_dataloader(target_test_df, x_cols, y_cols, batch_size=batch_size, shuffle=False)
+    return (
+        train_loader,
+        source_val_loader,
+        source_test_loader,
+        target_val_loader,
+        target_test_loader,
+        x_cols,
+        y_cols,
+        feature_params,
+        target_params,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Train / evaluate one epoch
-# ---------------------------------------------------------------------------
 def train_one_epoch(
     model: nn.Module,
-    loader: DataLoader,
+    loader,
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
@@ -119,12 +180,7 @@ def train_one_epoch(
 
 
 @torch.no_grad()
-def evaluate(
-    model: nn.Module,
-    loader: DataLoader,
-    criterion: nn.Module,
-    device: torch.device,
-) -> tuple[float, np.ndarray, np.ndarray]:
+def evaluate(model: nn.Module, loader, criterion: nn.Module, device: torch.device):
     model.eval()
     total_loss = 0.0
     n_batches = 0
@@ -143,22 +199,28 @@ def evaluate(
     return avg_loss, preds, targets
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train electricity demand forecasting model")
+    p = argparse.ArgumentParser(description="Train explicit-lag forecasting model")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--seq_len", type=int, default=168, help="Input window (hours)")
     p.add_argument("--pred_len", type=int, default=24, help="Forecast horizon (hours)")
-    p.add_argument("--target_col", type=str, default="target_es")
-    p.add_argument("--batch_size", type=int, default=64)
+    p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--patience", type=int, default=5, help="Early stopping patience")
-    p.add_argument("--hidden_dims", type=int, nargs="+", default=[512, 256, 128])
+    p.add_argument("--patience", type=int, default=5)
+    p.add_argument("--hidden_dims", type=int, nargs="+", default=[256, 128, 64])
     p.add_argument("--dropout", type=float, default=0.1)
-    p.add_argument("--experiment_name", type=str, default="mlp_baseline")
+    p.add_argument("--include_temporal", dest="include_temporal", action="store_true")
+    p.add_argument("--no-include-temporal", dest="include_temporal", action="store_false")
+    p.add_argument("--include_weather", dest="include_weather", action="store_true")
+    p.add_argument("--no-include-weather", dest="include_weather", action="store_false")
+    p.add_argument("--include_country_id", dest="include_country_id", action="store_true")
+    p.add_argument("--no-include-country-id", dest="include_country_id", action="store_false")
+    p.add_argument("--experiment_name", type=str, default="mlp_tabular_long")
+    p.set_defaults(
+        include_temporal=True,
+        include_weather=True,
+        include_country_id=True,
+    )
     return p.parse_args()
 
 
@@ -166,70 +228,106 @@ def main() -> None:
     args = parse_args()
     set_seed(args.seed)
 
-    root = Path(__file__).resolve().parents[1]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # Data
-    print("Loading data...")
-    train_loader, val_loader, test_loader, scaler_params = build_loaders(
-        root, args.seq_len, args.pred_len, args.target_col, args.batch_size
+    print("Loading long-format processed data...")
+    (
+        train_loader,
+        source_val_loader,
+        source_test_loader,
+        target_val_loader,
+        target_test_loader,
+        feature_cols,
+        target_cols,
+        feature_params,
+        target_params,
+    ) = build_loaders(
+        ROOT,
+        pred_len=args.pred_len,
+        batch_size=args.batch_size,
+        include_temporal=args.include_temporal,
+        include_weather=args.include_weather,
+        include_country_id=args.include_country_id,
     )
 
-    # Model
-    n_features = train_loader.dataset.values.shape[1]
     model = MLPBaseline(
-        n_features=n_features,
-        seq_len=args.seq_len,
+        input_dim=len(feature_cols),
         pred_len=args.pred_len,
         hidden_dims=args.hidden_dims,
         dropout=args.dropout,
     ).to(device)
+    print(f"Input features: {len(feature_cols)}")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    # MLflow
     mlflow.set_experiment(args.experiment_name)
     with mlflow.start_run():
+        run = mlflow.active_run()
         mlflow.log_params(vars(args))
-        mlflow.log_param("n_features", n_features)
+        mlflow.log_param("n_features", len(feature_cols))
         mlflow.log_param("device", str(device))
 
-        # Training loop
         best_val_loss = float("inf")
+        best_epoch = 0
         patience_counter = 0
         best_model_state = None
+        history = []
 
         for epoch in range(1, args.epochs + 1):
             t0 = time.time()
             train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
-            val_loss, val_preds, val_targets = evaluate(model, val_loader, criterion, device)
+            source_val_loss, source_val_preds, source_val_targets = evaluate(
+                model, source_val_loader, criterion, device
+            )
+            target_val_loss, target_val_preds, target_val_targets = evaluate(
+                model, target_val_loader, criterion, device
+            )
             elapsed = time.time() - t0
-
-            val_metrics = compute_metrics(val_preds, val_targets)
+            source_val_metrics = compute_metrics(source_val_preds, source_val_targets)
+            target_val_metrics = compute_metrics(target_val_preds, target_val_targets)
 
             print(
                 f"Epoch {epoch:3d}/{args.epochs} | "
                 f"train_loss={train_loss:.6f} | "
-                f"val_loss={val_loss:.6f} | "
-                f"val_mae={val_metrics['mae']:.4f} | "
-                f"val_rmse={val_metrics['rmse']:.4f} | "
+                f"source_val_loss={source_val_loss:.6f} | "
+                f"source_val_mae={source_val_metrics['mae']:.4f} | "
+                f"target_val_mae={target_val_metrics['mae']:.4f} | "
                 f"{elapsed:.1f}s"
             )
 
-            mlflow.log_metrics({
-                "train_loss": train_loss,
-                "val_loss": val_loss,
-                "val_mae": val_metrics["mae"],
-                "val_rmse": val_metrics["rmse"],
-                "val_mape": val_metrics["mape"],
-            }, step=epoch)
+            mlflow.log_metrics(
+                {
+                    "train_loss": train_loss,
+                    "source_val_loss": source_val_loss,
+                    "source_val_mae": source_val_metrics["mae"],
+                    "source_val_rmse": source_val_metrics["rmse"],
+                    "source_val_mape": source_val_metrics["mape"],
+                    "target_val_loss": target_val_loss,
+                    "target_val_mae": target_val_metrics["mae"],
+                    "target_val_rmse": target_val_metrics["rmse"],
+                    "target_val_mape": target_val_metrics["mape"],
+                },
+                step=epoch,
+            )
+            history.append(
+                {
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "source_val_loss": source_val_loss,
+                    "source_val_mae": source_val_metrics["mae"],
+                    "source_val_rmse": source_val_metrics["rmse"],
+                    "target_val_loss": target_val_loss,
+                    "target_val_mae": target_val_metrics["mae"],
+                    "target_val_rmse": target_val_metrics["rmse"],
+                }
+            )
 
-            # Early stopping
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if source_val_loss < best_val_loss:
+                best_val_loss = source_val_loss
+                best_epoch = epoch
                 patience_counter = 0
                 best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
             else:
@@ -238,54 +336,124 @@ def main() -> None:
                     print(f"Early stopping at epoch {epoch}")
                     break
 
-        # Restore best model
         if best_model_state is not None:
             model.load_state_dict(best_model_state)
 
-        # Test evaluation
-        test_loss, test_preds, test_targets = evaluate(model, test_loader, criterion, device)
+        source_test_loss, source_test_preds, source_test_targets = evaluate(
+            model, source_test_loader, criterion, device
+        )
+        target_test_loss, target_test_preds, target_test_targets = evaluate(
+            model, target_test_loader, criterion, device
+        )
+        source_test_metrics_norm = compute_metrics(source_test_preds, source_test_targets)
+        target_test_metrics_norm = compute_metrics(target_test_preds, target_test_targets)
 
-        # Desnormalitzar per obtenir mètriques en MW reals
-        target_mean = scaler_params["mean"][args.target_col]
-        target_std = scaler_params["std"][args.target_col]
-        test_preds_mw = test_preds * target_std + target_mean
-        test_targets_mw = test_targets * target_std + target_mean
+        mean = target_params["mean"].to_numpy(dtype=np.float32)
+        std = target_params["std"].replace(0, 1).to_numpy(dtype=np.float32)
+        source_test_preds_mw = source_test_preds * std + mean
+        source_test_targets_mw = source_test_targets * std + mean
+        target_test_preds_mw = target_test_preds * std + mean
+        target_test_targets_mw = target_test_targets * std + mean
+        source_test_metrics_mw = compute_metrics(source_test_preds_mw, source_test_targets_mw)
+        target_test_metrics_mw = compute_metrics(target_test_preds_mw, target_test_targets_mw)
 
-        test_metrics_norm = compute_metrics(test_preds, test_targets)
-        test_metrics_mw = compute_metrics(test_preds_mw, test_targets_mw)
+        print("\n--- Source Test Results (normalised) ---")
+        print(f"  Loss: {source_test_loss:.6f}")
+        print(f"  MAE:  {source_test_metrics_norm['mae']:.4f}")
+        print(f"  RMSE: {source_test_metrics_norm['rmse']:.4f}")
+        print(f"  MAPE: {source_test_metrics_norm['mape']:.2f}%")
 
-        print("\n--- Test Results (normalised) ---")
-        print(f"  Loss: {test_loss:.6f}")
-        print(f"  MAE:  {test_metrics_norm['mae']:.4f}")
-        print(f"  RMSE: {test_metrics_norm['rmse']:.4f}")
-        print(f"  MAPE: {test_metrics_norm['mape']:.2f}%")
+        print("\n--- Source Test Results (MW) ---")
+        print(f"  MAE:  {source_test_metrics_mw['mae']:.1f} MW")
+        print(f"  RMSE: {source_test_metrics_mw['rmse']:.1f} MW")
+        print(f"  MAPE: {source_test_metrics_mw['mape']:.2f}%")
 
-        print("\n--- Test Results (MW) ---")
-        print(f"  MAE:  {test_metrics_mw['mae']:.1f} MW")
-        print(f"  RMSE: {test_metrics_mw['rmse']:.1f} MW")
-        print(f"  MAPE: {test_metrics_mw['mape']:.2f}%")
+        print("\n--- Target Validation Results (normalised) ---")
+        print(f"  Loss: {target_val_loss:.6f}")
+        print(f"  MAE:  {target_val_metrics['mae']:.4f}")
+        print(f"  RMSE: {target_val_metrics['rmse']:.4f}")
+        print(f"  MAPE: {target_val_metrics['mape']:.2f}%")
 
-        mlflow.log_metrics({
-            "test_loss": test_loss,
-            "test_mae_norm": test_metrics_norm["mae"],
-            "test_rmse_norm": test_metrics_norm["rmse"],
-            "test_mape": test_metrics_norm["mape"],
-            "test_mae_mw": test_metrics_mw["mae"],
-            "test_rmse_mw": test_metrics_mw["rmse"],
-        })
+        print("\n--- Target Test Results (normalised) ---")
+        print(f"  Loss: {target_test_loss:.6f}")
+        print(f"  MAE:  {target_test_metrics_norm['mae']:.4f}")
+        print(f"  RMSE: {target_test_metrics_norm['rmse']:.4f}")
+        print(f"  MAPE: {target_test_metrics_norm['mape']:.2f}%")
 
-        # Save model
-        out_dir = root / "output" / "models"
+        print("\n--- Target Test Results (MW) ---")
+        print(f"  MAE:  {target_test_metrics_mw['mae']:.1f} MW")
+        print(f"  RMSE: {target_test_metrics_mw['rmse']:.1f} MW")
+        print(f"  MAPE: {target_test_metrics_mw['mape']:.2f}%")
+
+        mlflow.log_metrics(
+            {
+                "source_test_loss": source_test_loss,
+                "source_test_mae_norm": source_test_metrics_norm["mae"],
+                "source_test_rmse_norm": source_test_metrics_norm["rmse"],
+                "source_test_mape": source_test_metrics_norm["mape"],
+                "source_test_mae_mw": source_test_metrics_mw["mae"],
+                "source_test_rmse_mw": source_test_metrics_mw["rmse"],
+                "target_test_loss": target_test_loss,
+                "target_test_mae_norm": target_test_metrics_norm["mae"],
+                "target_test_rmse_norm": target_test_metrics_norm["rmse"],
+                "target_test_mape": target_test_metrics_norm["mape"],
+                "target_test_mae_mw": target_test_metrics_mw["mae"],
+                "target_test_rmse_mw": target_test_metrics_mw["rmse"],
+            }
+        )
+
+        out_dir = ROOT / "output" / "models"
+        results_dir = ROOT / "results"
         out_dir.mkdir(parents=True, exist_ok=True)
-        model_path = out_dir / f"mlp_baseline_seed{args.seed}.pt"
-        torch.save({
-            "model_state_dict": model.state_dict(),
-            "args": vars(args),
-            "scaler_params": scaler_params,
-            "test_metrics_mw": test_metrics_mw,
-        }, model_path)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        model_path = out_dir / f"mlp_tabular_long_seed{args.seed}.pt"
+        torch.save(
+            {
+                "model_state_dict": model.state_dict(),
+                "args": vars(args),
+                "feature_cols": feature_cols,
+                "target_cols": target_cols,
+                "feature_params": feature_params,
+                "target_params": target_params,
+                "source_test_metrics_mw": source_test_metrics_mw,
+                "target_test_metrics_mw": target_test_metrics_mw,
+            },
+            model_path,
+        )
         mlflow.log_artifact(str(model_path))
+
+        metrics_path = results_dir / f"mlp_metrics_seed{args.seed}.json"
+        with open(metrics_path, "w") as f:
+            json.dump(
+                {
+                    "run_id": run.info.run_id if run is not None else None,
+                    "seed": args.seed,
+                    "n_features": len(feature_cols),
+                    "n_parameters": int(sum(p.numel() for p in model.parameters())),
+                    "best_epoch": best_epoch,
+                    "best_source_val_loss": best_val_loss,
+                    "history": history,
+                    "source_test": {
+                        "loss_norm": source_test_loss,
+                        "metrics_norm": source_test_metrics_norm,
+                        "metrics_mw": source_test_metrics_mw,
+                    },
+                    "target_val": {
+                        "loss_norm": target_val_loss,
+                        "metrics_norm": target_val_metrics,
+                    },
+                    "target_test": {
+                        "loss_norm": target_test_loss,
+                        "metrics_norm": target_test_metrics_norm,
+                        "metrics_mw": target_test_metrics_mw,
+                    },
+                },
+                f,
+                indent=2,
+            )
+        mlflow.log_artifact(str(metrics_path))
         print(f"\nModel saved to {model_path}")
+        print(f"Metrics saved to {metrics_path}")
 
 
 if __name__ == "__main__":

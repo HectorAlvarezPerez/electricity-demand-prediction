@@ -35,6 +35,10 @@ mlflow.db
 .vscode/
 .idea/
 *.swp
+*.aux
+*.log
+*.out
+*.toc
 
 
 output/

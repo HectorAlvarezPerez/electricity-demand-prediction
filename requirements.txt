@@ -1,6 +1,7 @@
 torch>=2.2.0
 torch-geometric>=2.5.0
 pandas>=2.0.0
+polars>=1.8.0
 numpy>=1.24.0
 pot>=0.9.3 # Python Optimal Transport
 geomloss>=0.2.6 # For Sinkhorn divergences
