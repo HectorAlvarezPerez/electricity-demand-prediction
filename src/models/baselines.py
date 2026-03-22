@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns
+from src.paths import METRICS_DIR, MODELS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
 
 TARGET_CODE = "ES"
 SOURCE_CODES = ["BE", "DE", "FR", "GR", "IT", "NL", "PT"]
@@ -125,16 +126,12 @@ def evaluate_per_domain(
 def main() -> None:
     args = parse_args()
 
-    data_dir = ROOT / "data" / "processed_long"
-    models_dir = ROOT / "saved_models"
-    results_dir = ROOT / "results"
-    models_dir.mkdir(parents=True, exist_ok=True)
-    results_dir.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
 
     print("Loading long-format processed splits...")
-    train_df = load_split(data_dir / "train.parquet")
-    val_df = load_split(data_dir / "val.parquet")
-    test_df = load_split(data_dir / "test.parquet")
+    train_df = load_split(PROCESSED_DATA_DIR / "train.parquet")
+    val_df = load_split(PROCESSED_DATA_DIR / "val.parquet")
+    test_df = load_split(PROCESSED_DATA_DIR / "test.parquet")
 
     train_df = train_df[train_df["role"] == "source"].reset_index(drop=True)
     val_df = val_df[val_df["role"] == "source"].reset_index(drop=True)
@@ -173,8 +170,8 @@ def main() -> None:
         x_cols,
         y_cols,
     )
-    joblib.dump(ridge, models_dir / "baseline_ridge.joblib")
-    print(f"Saved Ridge model -> {models_dir / 'baseline_ridge.joblib'}")
+    joblib.dump(ridge, MODELS_DIR / "baseline_ridge.joblib")
+    print(f"Saved Ridge model -> {MODELS_DIR / 'baseline_ridge.joblib'}")
 
     print("\nTraining XGBoost on source domains...")
     xgb = XGBRegressor(
@@ -199,9 +196,9 @@ def main() -> None:
         x_cols,
         y_cols,
     )
-    xgb.save_model(str(models_dir / "baseline_xgb.json"))
-    print(f"Saved XGBoost model -> {models_dir / 'baseline_xgb.json'}")
-    meta_path = models_dir / "baseline_xgb_features.json"
+    xgb.save_model(str(MODELS_DIR / "baseline_xgb.json"))
+    print(f"Saved XGBoost model -> {MODELS_DIR / 'baseline_xgb.json'}")
+    meta_path = MODELS_DIR / "baseline_xgb_features.json"
     with open(meta_path, "w") as f:
         json.dump(
             {
@@ -216,7 +213,7 @@ def main() -> None:
         )
     print(f"Saved XGBoost metadata -> {meta_path}")
 
-    results_path = results_dir / "baseline_metrics.json"
+    results_path = METRICS_DIR / "baseline_metrics.json"
     with open(results_path, "w") as f:
         json.dump(all_results, f, indent=2)
     print(f"\nAll metrics saved -> {results_path}")

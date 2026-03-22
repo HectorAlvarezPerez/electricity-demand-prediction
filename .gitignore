@@ -41,8 +41,5 @@ mlflow.db
 *.toc
 
 
-output/
+artifacts/
 AGENTS.md
-docs/
-results/
-saved_models/

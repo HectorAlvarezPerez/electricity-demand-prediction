@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 from src.data.dataset import create_dataloader
 from src.data.preprocess import normalize_data
 from src.models.mlp_baseline import MLPBaseline
+from src.paths import METRICS_DIR, MODELS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
 from src.train import compute_metrics, evaluate, set_seed, train_one_epoch
 
 
@@ -36,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--pretrained_model",
         type=Path,
-        default=ROOT / "output" / "models" / "mlp_tabular_long_seed42.pt",
+        default=MODELS_DIR / "mlp_tabular_long_seed42.pt",
         help="Checkpoint produced by src/train.py",
     )
     p.add_argument("--seed", type=int, default=42)
@@ -58,6 +59,12 @@ def parse_args() -> argparse.Namespace:
 
 def load_split(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
+
+
+def denormalize_targets(values: np.ndarray, target_params: dict) -> np.ndarray:
+    mean = target_params["mean"].to_numpy(dtype=np.float32)
+    std = target_params["std"].replace(0, 1).to_numpy(dtype=np.float32)
+    return values * std + mean
 
 
 def sample_target_train(df: pd.DataFrame, fraction: float, sampling: str, seed: int) -> pd.DataFrame:
@@ -89,10 +96,9 @@ def build_target_loaders(
     sampling: str,
     seed: int,
 ):
-    data_dir = root / "data" / "processed_long"
-    train_all = load_split(data_dir / "train.parquet")
-    val_all = load_split(data_dir / "val.parquet")
-    test_all = load_split(data_dir / "test.parquet")
+    train_all = load_split(PROCESSED_DATA_DIR / "train.parquet")
+    val_all = load_split(PROCESSED_DATA_DIR / "val.parquet")
+    test_all = load_split(PROCESSED_DATA_DIR / "test.parquet")
 
     target_train_full = train_all[train_all["role"] == "target"].reset_index(drop=True)
     target_val = val_all[val_all["role"] == "target"].reset_index(drop=True)
@@ -145,7 +151,10 @@ def main() -> None:
     if not args.pretrained_model.exists():
         raise FileNotFoundError(args.pretrained_model)
 
-    checkpoint = torch.load(args.pretrained_model, map_location="cpu")
+    # This checkpoint is produced locally by src/train.py and stores
+    # metadata beyond raw tensors (for example pandas-backed scaling stats),
+    # so PyTorch 2.6+ must load it with weights_only disabled.
+    checkpoint = torch.load(args.pretrained_model, map_location="cpu", weights_only=False)
     pretrained_args = checkpoint["args"]
     feature_cols = checkpoint["feature_cols"]
     target_cols = checkpoint["target_cols"]
@@ -190,11 +199,16 @@ def main() -> None:
     zero_test_loss, zero_test_preds, zero_test_targets = evaluate(model, test_loader, criterion, device)
     zero_val_metrics = compute_metrics(zero_val_preds, zero_val_targets)
     zero_test_metrics = compute_metrics(zero_test_preds, zero_test_targets)
+    zero_test_preds_mw = denormalize_targets(zero_test_preds, target_params)
+    zero_test_targets_mw = denormalize_targets(zero_test_targets, target_params)
+    zero_test_metrics_mw = compute_metrics(zero_test_preds_mw, zero_test_targets_mw)
 
     print("\n--- Zero-shot target performance before fine-tuning ---")
     print(f"  Val MAE:  {zero_val_metrics['mae']:.4f}")
     print(f"  Test MAE: {zero_test_metrics['mae']:.4f}")
     print(f"  Test RMSE:{zero_test_metrics['rmse']:.4f}")
+    print(f"  Test MAE: {zero_test_metrics_mw['mae']:.1f} MW")
+    print(f"  Test RMSE:{zero_test_metrics_mw['rmse']:.1f} MW")
 
     mlflow.set_experiment(args.experiment_name)
     with mlflow.start_run():
@@ -268,11 +282,27 @@ def main() -> None:
         target_test_loss, target_test_preds, target_test_targets = evaluate(model, test_loader, criterion, device)
         target_test_metrics_norm = compute_metrics(target_test_preds, target_test_targets)
 
-        mean = target_params["mean"].to_numpy(dtype=np.float32)
-        std = target_params["std"].replace(0, 1).to_numpy(dtype=np.float32)
-        target_test_preds_mw = target_test_preds * std + mean
-        target_test_targets_mw = target_test_targets * std + mean
+        target_test_preds_mw = denormalize_targets(target_test_preds, target_params)
+        target_test_targets_mw = denormalize_targets(target_test_targets, target_params)
         target_test_metrics_mw = compute_metrics(target_test_preds_mw, target_test_targets_mw)
+        improvement = {
+            "mae_norm_abs": zero_test_metrics["mae"] - target_test_metrics_norm["mae"],
+            "rmse_norm_abs": zero_test_metrics["rmse"] - target_test_metrics_norm["rmse"],
+            "mae_mw_abs": zero_test_metrics_mw["mae"] - target_test_metrics_mw["mae"],
+            "rmse_mw_abs": zero_test_metrics_mw["rmse"] - target_test_metrics_mw["rmse"],
+        }
+        improvement["mae_norm_pct"] = (
+            improvement["mae_norm_abs"] / zero_test_metrics["mae"] * 100 if zero_test_metrics["mae"] else float("nan")
+        )
+        improvement["rmse_norm_pct"] = (
+            improvement["rmse_norm_abs"] / zero_test_metrics["rmse"] * 100 if zero_test_metrics["rmse"] else float("nan")
+        )
+        improvement["mae_mw_pct"] = (
+            improvement["mae_mw_abs"] / zero_test_metrics_mw["mae"] * 100 if zero_test_metrics_mw["mae"] else float("nan")
+        )
+        improvement["rmse_mw_pct"] = (
+            improvement["rmse_mw_abs"] / zero_test_metrics_mw["rmse"] * 100 if zero_test_metrics_mw["rmse"] else float("nan")
+        )
 
         print("\n--- Fine-tuned target test results (normalised) ---")
         print(f"  Loss: {target_test_loss:.6f}")
@@ -285,6 +315,12 @@ def main() -> None:
         print(f"  RMSE: {target_test_metrics_mw['rmse']:.1f} MW")
         print(f"  MAPE: {target_test_metrics_mw['mape']:.2f}%")
 
+        print("\n--- Improvement vs zero-shot target test ---")
+        print(f"  Delta MAE (norm): {improvement['mae_norm_abs']:+.4f} ({improvement['mae_norm_pct']:+.2f}%)")
+        print(f"  Delta RMSE (norm): {improvement['rmse_norm_abs']:+.4f} ({improvement['rmse_norm_pct']:+.2f}%)")
+        print(f"  Delta MAE (MW):   {improvement['mae_mw_abs']:+.1f} MW ({improvement['mae_mw_pct']:+.2f}%)")
+        print(f"  Delta RMSE (MW):  {improvement['rmse_mw_abs']:+.1f} MW ({improvement['rmse_mw_pct']:+.2f}%)")
+
         mlflow.log_metrics(
             {
                 "zero_shot_target_val_loss": zero_val_loss,
@@ -293,11 +329,17 @@ def main() -> None:
                 "zero_shot_target_test_loss": zero_test_loss,
                 "zero_shot_target_test_mae": zero_test_metrics["mae"],
                 "zero_shot_target_test_rmse": zero_test_metrics["rmse"],
+                "zero_shot_target_test_mae_mw": zero_test_metrics_mw["mae"],
+                "zero_shot_target_test_rmse_mw": zero_test_metrics_mw["rmse"],
                 "finetune_target_test_loss": target_test_loss,
                 "finetune_target_test_mae_norm": target_test_metrics_norm["mae"],
                 "finetune_target_test_rmse_norm": target_test_metrics_norm["rmse"],
                 "finetune_target_test_mae_mw": target_test_metrics_mw["mae"],
                 "finetune_target_test_rmse_mw": target_test_metrics_mw["rmse"],
+                "improvement_target_test_mae_norm_abs": improvement["mae_norm_abs"],
+                "improvement_target_test_rmse_norm_abs": improvement["rmse_norm_abs"],
+                "improvement_target_test_mae_mw_abs": improvement["mae_mw_abs"],
+                "improvement_target_test_rmse_mw_abs": improvement["rmse_mw_abs"],
             }
         )
 
@@ -305,12 +347,8 @@ def main() -> None:
         if args.freeze_backbone:
             suffix += "_headonly"
 
-        out_dir = ROOT / "output" / "models"
-        results_dir = ROOT / "results"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        results_dir.mkdir(parents=True, exist_ok=True)
-
-        model_path = out_dir / f"mlp_finetune_{suffix}.pt"
+        ensure_artifact_dirs()
+        model_path = MODELS_DIR / f"mlp_finetune_{suffix}.pt"
         torch.save(
             {
                 "model_state_dict": model.state_dict(),
@@ -328,7 +366,7 @@ def main() -> None:
             model_path,
         )
 
-        metrics_path = results_dir / f"mlp_finetune_{suffix}.json"
+        metrics_path = METRICS_DIR / f"mlp_finetune_{suffix}.json"
         with open(metrics_path, "w") as f:
             json.dump(
                 {
@@ -349,12 +387,14 @@ def main() -> None:
                     "zero_shot_target_test": {
                         "loss_norm": zero_test_loss,
                         "metrics_norm": zero_test_metrics,
+                        "metrics_mw": zero_test_metrics_mw,
                     },
                     "finetuned_target_test": {
                         "loss_norm": target_test_loss,
                         "metrics_norm": target_test_metrics_norm,
                         "metrics_mw": target_test_metrics_mw,
                     },
+                    "improvement_vs_zero_shot": improvement,
                 },
                 f,
                 indent=2,

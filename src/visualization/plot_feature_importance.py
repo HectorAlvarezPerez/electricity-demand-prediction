@@ -4,15 +4,20 @@ Generate XGBoost feature-importance plots for the long-format baseline.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 
 ROOT = Path(__file__).resolve().parents[2]
-FIGURES_DIR = ROOT / "docs" / "figures"
-MODEL_PATH = ROOT / "saved_models" / "baseline_xgb.json"
-MODEL_META_PATH = ROOT / "saved_models" / "baseline_xgb_features.json"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.paths import FIGURES_DIR, MODELS_DIR, ensure_artifact_dirs
+
+MODEL_PATH = MODELS_DIR / "baseline_xgb.json"
+MODEL_META_PATH = MODELS_DIR / "baseline_xgb_features.json"
 
 
 def feature_family(col_name: str) -> str:
@@ -34,7 +39,7 @@ def feature_family(col_name: str) -> str:
 
 
 def main() -> None:
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
 
     if not MODEL_PATH.exists():
         print(f"ERROR: {MODEL_PATH} not found.")

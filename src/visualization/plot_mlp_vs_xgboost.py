@@ -19,13 +19,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.preprocess import normalize_data
+from src.paths import FIGURES_DIR, METRICS_DIR, MLFLOW_DB, MODELS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
 
-MLFLOW_DB = ROOT / "mlflow.db"
-BASELINE_RESULTS = ROOT / "results" / "baseline_metrics.json"
-XGB_MODEL = ROOT / "saved_models" / "baseline_xgb.json"
-XGB_META = ROOT / "saved_models" / "baseline_xgb_features.json"
-OUT_JSON = ROOT / "results" / "mlp_xgboost_comparison.json"
-OUT_FIG = ROOT / "docs" / "figures" / "mlp_vs_xgboost.png"
+BASELINE_RESULTS = METRICS_DIR / "baseline_metrics.json"
+XGB_MODEL = MODELS_DIR / "baseline_xgb.json"
+XGB_META = MODELS_DIR / "baseline_xgb_features.json"
+OUT_JSON = METRICS_DIR / "mlp_xgboost_comparison.json"
+OUT_FIG = FIGURES_DIR / "mlp_vs_xgboost.png"
 
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
@@ -114,9 +114,8 @@ def load_xgboost_metrics() -> dict:
     with open(XGB_META) as f:
         meta = json.load(f)
 
-    data_dir = ROOT / "data" / "processed_long"
-    train_df = load_split(data_dir / "train.parquet")
-    test_df = load_split(data_dir / "test.parquet")
+    train_df = load_split(PROCESSED_DATA_DIR / "train.parquet")
+    test_df = load_split(PROCESSED_DATA_DIR / "test.parquet")
 
     train_df = train_df[train_df["role"] == "source"].reset_index(drop=True)
     source_test_df = test_df[test_df["role"] == "source"].reset_index(drop=True)
@@ -216,7 +215,7 @@ def main() -> None:
     mlp = load_latest_mlp_metrics()
     xgb = load_xgboost_metrics()
 
-    OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
     with open(OUT_JSON, "w") as f:
         json.dump(
             {

@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 from src.data.dataset import create_dataloader
 from src.data.preprocess import feature_columns, normalize_data, target_columns
 from src.models.mlp_baseline import MLPBaseline
+from src.paths import METRICS_DIR, MODELS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
 
 
 def set_seed(seed: int) -> None:
@@ -96,10 +97,9 @@ def build_loaders(
     include_weather: bool,
     include_country_id: bool,
 ) -> tuple:
-    data_dir = root / "data" / "processed_long"
-    train_all = load_split(data_dir / "train.parquet")
-    val_all = load_split(data_dir / "val.parquet")
-    test_all = load_split(data_dir / "test.parquet")
+    train_all = load_split(PROCESSED_DATA_DIR / "train.parquet")
+    val_all = load_split(PROCESSED_DATA_DIR / "val.parquet")
+    test_all = load_split(PROCESSED_DATA_DIR / "test.parquet")
 
     train_df = split_for_roles(train_all, {"source"})
     source_val_df = split_for_roles(val_all, {"source"})
@@ -402,11 +402,8 @@ def main() -> None:
             }
         )
 
-        out_dir = ROOT / "output" / "models"
-        results_dir = ROOT / "results"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        results_dir.mkdir(parents=True, exist_ok=True)
-        model_path = out_dir / f"mlp_tabular_long_seed{args.seed}.pt"
+        ensure_artifact_dirs()
+        model_path = MODELS_DIR / f"mlp_tabular_long_seed{args.seed}.pt"
         torch.save(
             {
                 "model_state_dict": model.state_dict(),
@@ -422,7 +419,7 @@ def main() -> None:
         )
         mlflow.log_artifact(str(model_path))
 
-        metrics_path = results_dir / f"mlp_metrics_seed{args.seed}.json"
+        metrics_path = METRICS_DIR / f"mlp_metrics_seed{args.seed}.json"
         with open(metrics_path, "w") as f:
             json.dump(
                 {

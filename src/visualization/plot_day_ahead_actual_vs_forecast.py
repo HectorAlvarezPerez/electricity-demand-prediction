@@ -1,19 +1,17 @@
 """
-Plot one grouped-bar chart comparing actual vs predicted day-ahead demand.
+Plot actual demand vs day-ahead forecasts on a short time window.
 
-For each country, the chart shows average delivered demand on the aligned
-evaluation timestamps for:
-  - actual demand
-  - ENTSO-E day-ahead forecast
-  - Ridge h=24
-  - XGBoost h=24
+The figure is intended to complement the MAE benchmark with a temporal view of
+how much each forecast deviates from the realised demand.
 """
 from __future__ import annotations
 
-from pathlib import Path
+import json
 import sys
+from pathlib import Path
 
 import joblib
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -24,24 +22,22 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns
-from src.paths import FIGURES_DIR, MODELS_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_artifact_dirs
 
-DATA_DIR = PROCESSED_DATA_DIR
-FORECAST_DIR = RAW_DATA_DIR / "europe" / "forecast"
+DATA_DIR = ROOT / "data" / "processed_long"
+FORECAST_DIR = ROOT / "data" / "raw" / "europe" / "forecast"
+MODELS_DIR = ROOT / "saved_models"
+FIGURES_DIR = ROOT / "docs" / "figures"
 
 RIDGE_PATH = MODELS_DIR / "baseline_ridge.joblib"
 XGB_PATH = MODELS_DIR / "baseline_xgb.json"
-
-DOMAIN_ORDER = [
-    ("source_be", "BE", "Bèlgica"),
-    ("source_de", "DE", "Alemanya"),
-    ("source_fr", "FR", "França"),
-    ("source_gr", "GR", "Grècia"),
-    ("source_it", "IT", "Itàlia"),
-    ("source_nl", "NL", "Països Baixos"),
-    ("source_pt", "PT", "Portugal"),
-    ("target_es", "ES", "Espanya (Target)"),
-]
+COUNTRIES = ["ES", "DE", "NL"]
+COUNTRY_LABELS = {
+    "ES": "Espanya (ENTSO-E millor)",
+    "DE": "Alemanya (XGBoost millor)",
+    "NL": "Països Baixos (XGBoost millor)",
+}
+WINDOW_START = pd.Timestamp("2024-01-01", tz="UTC")
+WINDOW_END = pd.Timestamp("2024-02-01", tz="UTC")
 
 
 def load_split(name: str) -> pd.DataFrame:
@@ -80,11 +76,7 @@ def load_entsoe_forecast(country_code: str) -> pd.DataFrame:
     return df[["delivery_timestamp", "entsoe_forecast"]].dropna().sort_values("delivery_timestamp")
 
 
-def build_delivery_frame(
-    country_df_raw: pd.DataFrame,
-    prediction_mw: np.ndarray,
-    pred_name: str,
-) -> pd.DataFrame:
+def build_delivery_frame(country_df_raw: pd.DataFrame, prediction_mw: np.ndarray, pred_name: str) -> pd.DataFrame:
     frame = pd.DataFrame(
         {
             "delivery_timestamp": pd.to_datetime(country_df_raw["utc_timestamp"], utc=True) + pd.Timedelta(hours=24),
@@ -101,7 +93,7 @@ def build_delivery_frame(
 
 
 def main() -> None:
-    ensure_artifact_dirs()
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
     train_df = load_split("train")
     test_df_raw = load_split("test")
@@ -123,13 +115,9 @@ def main() -> None:
     y_mean = float(target_params["mean"]["y_h24"])
     y_std = float(target_params["std"]["y_h24"])
 
-    labels: list[str] = []
-    actual_vals: list[float] = []
-    entsoe_vals: list[float] = []
-    ridge_vals: list[float] = []
-    xgb_vals: list[float] = []
+    fig, axes = plt.subplots(len(COUNTRIES), 1, figsize=(13, 8.2), sharex=True)
 
-    for _, code, label in DOMAIN_ORDER:
+    for ax, code in zip(axes, COUNTRIES):
         raw_domain = test_df_raw[test_df_raw["country_code"] == code].reset_index(drop=True)
         scaled_domain = test_scaled[test_scaled["country_code"] == code].reset_index(drop=True)
         X = scaled_domain[feature_cols].to_numpy(dtype=np.float32, copy=True)
@@ -143,33 +131,52 @@ def main() -> None:
 
         merged = (
             base.merge(ridge_frame[["delivery_timestamp", "ridge_forecast"]], on="delivery_timestamp", how="left")
-            .merge(entsoe, on="delivery_timestamp", how="inner")
+            .merge(entsoe, on="delivery_timestamp", how="left")
+        )
+        merged = merged[
+            (merged["delivery_timestamp"] >= WINDOW_START) & (merged["delivery_timestamp"] < WINDOW_END)
+        ].copy()
+
+        ax.plot(merged["delivery_timestamp"], merged["actual_mw"], color="#111111", linewidth=1.8, label="Demanda real")
+        ax.plot(
+            merged["delivery_timestamp"],
+            merged["entsoe_forecast"],
+            color="#1b9e77",
+            linewidth=1.5,
+            label="ENTSO-E day-ahead",
+        )
+        ax.plot(
+            merged["delivery_timestamp"],
+            merged["xgboost_forecast"],
+            color="#1f78b4",
+            linewidth=1.5,
+            label="XGBoost h=24",
+        )
+        ax.plot(
+            merged["delivery_timestamp"],
+            merged["ridge_forecast"],
+            color="#7570b3",
+            linewidth=1.3,
+            alpha=0.9,
+            label="Ridge h=24",
         )
 
-        labels.append(label)
-        actual_vals.append(float(merged["actual_mw"].mean()))
-        entsoe_vals.append(float(merged["entsoe_forecast"].mean()))
-        ridge_vals.append(float(merged["ridge_forecast"].mean()))
-        xgb_vals.append(float(merged["xgboost_forecast"].mean()))
+        ax.set_title(COUNTRY_LABELS[code], fontsize=11)
+        ax.set_ylabel("MW", fontsize=10)
+        ax.grid(alpha=0.18)
 
-    x = np.arange(len(labels))
-    width = 0.2
+    axes[-1].xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%d-%b"))
+    axes[-1].set_xlabel("Gener 2024", fontsize=10)
+    fig.autofmt_xdate(rotation=0)
 
-    fig, ax = plt.subplots(figsize=(13, 5.8))
-    ax.bar(x - 1.5 * width, actual_vals, width=width, color="#222222", label="Demanda real")
-    ax.bar(x - 0.5 * width, entsoe_vals, width=width, color="#1b9e77", label="ENTSO-E day-ahead")
-    ax.bar(x + 0.5 * width, ridge_vals, width=width, color="#7570b3", label="Ridge h=24")
-    ax.bar(x + 1.5 * width, xgb_vals, width=width, color="#1f78b4", label="XGBoost h=24")
-
-    ax.set_ylabel("Demanda mitjana (MW)", fontsize=12)
-    ax.set_title("Comparativa day-ahead de demanda mitjana per país", fontsize=14)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=10)
-    ax.grid(axis="y", alpha=0.2)
-    ax.legend(fontsize=10, ncol=2)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, frameon=True, bbox_to_anchor=(0.5, 0.01))
+    fig.suptitle("Comparativa temporal entre demanda real i prediccions day-ahead", fontsize=15, y=0.98)
     fig.tight_layout()
+    fig.subplots_adjust(top=0.92, bottom=0.10)
 
-    out = FIGURES_DIR / "day_ahead_benchmark_per_domain.png"
+    out = FIGURES_DIR / "day_ahead_actual_vs_forecast_jan2024.png"
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved -> {out}")

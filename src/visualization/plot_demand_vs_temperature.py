@@ -4,6 +4,7 @@ Plot demand versus temperature as small multiples, one panel per country.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,8 +12,12 @@ import pandas as pd
 from matplotlib.lines import Line2D
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "data" / "processed_long"
-FIGURES_DIR = ROOT / "docs" / "figures"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.paths import FIGURES_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
+
+DATA_DIR = PROCESSED_DATA_DIR
 COUNTRY_ORDER = ["ES", "BE", "DE", "FR", "GR", "IT", "NL", "PT"]
 COUNTRY_LABELS = {
     "ES": "Espanya (target)",
@@ -110,7 +115,7 @@ def plot_panel(ax, df: pd.DataFrame, code: str) -> float:
 
 
 def main() -> None:
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
 
     df = load_all_splits()
 

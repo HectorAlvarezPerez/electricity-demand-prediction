@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns
+from src.paths import FIGURES_DIR, METRICS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
 
 TARGET_CODE = "ES"
 SOURCE_CODES = ["BE", "DE", "FR", "GR", "IT", "NL", "PT"]
@@ -45,9 +46,8 @@ DOMAIN_RESULT_KEYS = {
     "ES": "target_es",
 }
 
-DATA_DIR = ROOT / "data" / "processed_long"
-RESULTS_DIR = ROOT / "results"
-FIGURES_DIR = ROOT / "docs" / "figures"
+DATA_DIR = PROCESSED_DATA_DIR
+RESULTS_DIR = METRICS_DIR
 RIDGE_ALPHA = 1.0
 PRED_LEN = 24
 
@@ -271,7 +271,7 @@ def plot_improvement_pct(all_results):
 
 def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
 
     print("Loading long-format processed splits...")
     train_df = load_split(DATA_DIR / "train.parquet")

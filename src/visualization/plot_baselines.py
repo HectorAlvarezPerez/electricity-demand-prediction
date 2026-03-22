@@ -1,15 +1,20 @@
 """
-Reads results/baseline_metrics.json (produced by src/models/baselines.py)
-and generates comparison bar charts saved to docs/figures/.
+Reads artifacts/metrics/baseline_metrics.json (produced by src/models/baselines.py)
+and generates comparison bar charts saved to artifacts/figures/.
 """
 import json
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RESULTS_PATH = ROOT / "results" / "baseline_metrics.json"
-FIGURES_DIR = ROOT / "docs" / "figures"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.paths import FIGURES_DIR, METRICS_DIR, ensure_artifact_dirs
+
+RESULTS_PATH = METRICS_DIR / "baseline_metrics.json"
 
 DOMAIN_LABELS = {
     "source_be": "Bèlgica",
@@ -100,7 +105,7 @@ def plot_per_domain(results):
 
 
 def main():
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
 
     if not RESULTS_PATH.exists():
         print(f"ERROR: {RESULTS_PATH} not found. Run src/models/baselines.py first.")

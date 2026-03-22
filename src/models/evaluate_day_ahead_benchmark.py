@@ -29,15 +29,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns
+from src.paths import METRICS_DIR, MODELS_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_artifact_dirs
 
 TARGET_CODE = "ES"
 SOURCE_CODES = ["BE", "DE", "FR", "GR", "IT", "NL", "PT"]
 ALL_CODES = [TARGET_CODE, *SOURCE_CODES]
 
-DATA_DIR = ROOT / "data" / "processed_long"
-FORECAST_DIR = ROOT / "data" / "raw" / "europe" / "forecast"
-MODELS_DIR = ROOT / "saved_models"
-RESULTS_DIR = ROOT / "results"
+DATA_DIR = PROCESSED_DATA_DIR
+FORECAST_DIR = RAW_DATA_DIR / "europe" / "forecast"
 
 RIDGE_PATH = MODELS_DIR / "baseline_ridge.joblib"
 XGB_PATH = MODELS_DIR / "baseline_xgb.json"
@@ -132,7 +131,7 @@ def evaluate_entsoe_forecast(country_df_raw: pd.DataFrame) -> dict[str, float]:
 
 
 def main() -> None:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
 
     train_df = load_split("train")
     test_df_raw = load_split("test")
@@ -183,7 +182,7 @@ def main() -> None:
             "xgboost_h24": eval_metrics(xgb_frame["actual_mw"].to_numpy(), xgb_frame["pred_mw"].to_numpy()),
         }
 
-    out_path = RESULTS_DIR / "day_ahead_benchmark_metrics.json"
+    out_path = METRICS_DIR / "day_ahead_benchmark_metrics.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
 

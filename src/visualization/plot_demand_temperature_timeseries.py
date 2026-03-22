@@ -4,14 +4,19 @@ Plot one-year normalized demand and temperature time series for selected countri
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "data" / "processed_long"
-FIGURES_DIR = ROOT / "docs" / "figures"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.paths import FIGURES_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
+
+DATA_DIR = PROCESSED_DATA_DIR
 COUNTRIES = ["ES", "FR", "GR"]
 COUNTRY_LABELS = {
     "ES": "Espanya (target)",
@@ -33,7 +38,7 @@ def zscore(series: pd.Series) -> pd.Series:
 
 
 def main() -> None:
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
 
     df = load_all_splits()
     df["utc_timestamp"] = pd.to_datetime(df["utc_timestamp"], utc=True)

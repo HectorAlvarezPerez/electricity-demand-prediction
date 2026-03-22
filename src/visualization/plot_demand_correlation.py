@@ -4,14 +4,19 @@ Generate a Pearson correlation heatmap of hourly demand across all countries.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "data" / "processed_long"
-FIGURES_DIR = ROOT / "docs" / "figures"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.paths import FIGURES_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
+
+DATA_DIR = PROCESSED_DATA_DIR
 
 COUNTRY_ORDER = ["BE", "DE", "ES", "FR", "GR", "IT", "NL", "PT"]
 COUNTRY_LABELS = {
@@ -78,7 +83,7 @@ def plot_heatmap(corr: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
     df = load_all_splits()
     corr = build_corr_matrix(df)
     plot_heatmap(corr)

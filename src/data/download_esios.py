@@ -199,4 +199,4 @@ if __name__ == "__main__":
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     RAW_DIR = os.path.join(BASE_DIR, "data", "raw", "catalonia")
     downloader = ESIOSCataloniaDownloader(data_dir=RAW_DIR)
-    downloader.download_all(start_year=2026)
+    downloader.download_all(start_year=2015)
