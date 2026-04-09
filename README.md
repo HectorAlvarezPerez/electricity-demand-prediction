@@ -38,6 +38,20 @@ Els propers passos de desenvolupament (Roadmap):
 - entrenament `XGBoost` i `GraphSAGE` paral·lel sobre les renovables,
 - i figures d'anàlisi de resultats.
 
+Benchmark unificat de recursos per demanda:
+
+```bash
+.venv/bin/python src/run_resource_benchmark.py --seed 42 --xgb_n_jobs 4
+```
+
+Aquest flux genera comparatives de `XGBoost`, `MLP` i `GraphSAGE` sobre les mateixes particions i el mateix conjunt de features, guardant resultats detallats a `artifacts/metrics/resource_benchmark/`.
+
+El mateix runner actualitza directament la secció corresponent dins del document existent i genera la figura resum. Després només cal recompilar el PDF:
+
+```bash
+cd artifacts/reports && pdflatex document_general_resultats_i_desenvolupament.tex
+```
+
 ## Estructura del repositori
 
 ```text
@@ -250,6 +264,7 @@ python src/visualization/plot_baselines.py
 python src/visualization/plot_feature_importance.py
 python src/visualization/plot_mlp_vs_xgboost.py
 python src/visualization/plot_day_ahead_benchmark.py
+python src/visualization/plot_gnn_architecture.py
 ```
 
 Les figures es guarden a `artifacts/figures/`.
