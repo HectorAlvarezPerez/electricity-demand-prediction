@@ -1,22 +1,19 @@
 # Predicció de demanda elèctrica i adaptació de domini a Catalunya
 
-Repositori del TFG sobre predicció horària de demanda elèctrica i adaptació de domini, amb Catalunya com a motivació principal i `ES` com a domini objectiu operatiu en la pipeline actual.
+Repositori del TFG sobre predicció horària de demanda elèctrica i generació renovable, amb Catalunya com a motivació principal i `ES` com a domini objectiu operatiu en la pipeline actual.
 
 Títol de treball:
-`Prediccio de Demanda Electrica i Adaptacio de Domini a Catalunya amb OT`
+`Prediccio de Demanda Electrica i Adaptacio de Domini a Catalunya amb OT`.
 
 ## Objectiu
 
-Aquest projecte construeix una pipeline reproduïble per a:
+Aquest projecte reconstrueix la narrativa per demostrar experimentalment quan *no compensa usar una xarxa neuronal*, comparant `XGBoost` davant d'una única GNN simple i reproduïble en els eixos de: precisió, cost computacional i latència.
 
-- descarregar sèries horàries de demanda elèctrica de diversos països europeus,
-- incorporar variables temporals i meteorològiques,
-- generar un dataset tabular multihoritzó amb lags explícits,
-- entrenar models base no grafo,
-- avaluar transferència zero-shot al domini objectiu,
-- estudiar fine-tuning few-shot sobre el target.
+S'estructura en dos benchmarks paral·lels:
+1. **Benchmark de Demanda**: Previsió de demanda horària.
+2. **Benchmark de Renovables**: Previsió de generació (solar, eòlica, hidro, etc).
 
-L’estat actual del repositori està centrat en una primera línia base tabular. La part de GNN i l’adaptació amb Optimal Transport encara no està implementada.
+Per a cadascun d'ells la intenció és avaluar el millor baseline tabular (`XGBoost`) amb el baseline neuronal senzill d'aprenentatge sobre grafs (`GraphSAGE`), incloent-hi traces d'informació meteorològica prèvia.
 
 ## Estat actual
 
@@ -25,20 +22,21 @@ Actualment hi ha implementat:
 - descàrrega de demanda i generació des d’ENTSO-E,
 - descàrrega de demanda de Catalunya des de REE/ESIOS,
 - descàrrega de temperatura històrica des d’Open-Meteo,
-- preprocessat a format llarg amb lags explícits i horitzó de 24 hores,
+- preprocessat a format llarg amb lags explícits i horitzó de 24 hores (demanda),
 - splits temporals `train` / `val` / `test`,
-- baselines tabulars `Daily Naive`, `Ridge` i `XGBoost`,
-- baseline neuronal `MLP`,
+- baselines tabulars `Daily Naive`, `Ridge` i `XGBoost` (demanda),
+- baseline neuronal `MLP` (demanda),
 - fine-tuning few-shot per a `MLP` i `XGBoost`,
 - scripts de visualització i comparació de resultats.
 
-Encara falta:
+Els propers passos de desenvolupament (Roadmap):
 
-- models seqüencials tipus `LSTM` o `Transformer`,
-- models amb estructura de graf,
-- alineament de dominis amb OT,
-- configuració experimental més robusta,
-- tests automatitzats.
+- marc unificat d'avaluació de hardware/recursos (latència, throughput, pesos),
+- construcció de dades tipus graf associant per país segons correlació a `train`,
+- implementació del benchmark final per demanda amb `GraphSAGE`,
+- introducció del preprocessat diferenciat per a les generacions renovables,
+- entrenament `XGBoost` i `GraphSAGE` paral·lel sobre les renovables,
+- i figures d'anàlisi de resultats.
 
 ## Estructura del repositori
 
