@@ -1,9 +1,9 @@
-# Predicció de demanda elèctrica i adaptació de domini a Catalunya
+# Predicció de demanda elèctrica i generació renovable
 
 Repositori del TFG sobre predicció horària de demanda elèctrica i generació renovable, amb Catalunya com a motivació principal i `ES` com a domini objectiu operatiu en la pipeline actual.
 
 Títol de treball:
-`Prediccio de Demanda Electrica i Adaptacio de Domini a Catalunya amb OT`.
+`Prediccio de Demanda Electrica i Generacio Renovable amb Comparativa de Models`.
 
 ## Objectiu
 
@@ -13,7 +13,7 @@ S'estructura en dos benchmarks paral·lels:
 1. **Benchmark de Demanda**: Previsió de demanda horària.
 2. **Benchmark de Renovables**: Previsió de generació (solar, eòlica, hidro, etc).
 
-Per a cadascun d'ells la intenció és avaluar el millor baseline tabular (`XGBoost`) amb el baseline neuronal senzill d'aprenentatge sobre grafs (`GraphSAGE`), incloent-hi traces d'informació meteorològica prèvia.
+Per a cadascun d'ells s'avalua el millor baseline tabular (`XGBoost`) al costat d'una `MLP` tabular i d'un baseline senzill d'aprenentatge sobre grafs (`GraphSAGE`), incloent-hi variables meteorològiques quan el protocol ho requereix.
 
 ## Estat actual
 
@@ -21,22 +21,22 @@ Actualment hi ha implementat:
 
 - descàrrega de demanda i generació des d’ENTSO-E,
 - descàrrega de demanda de Catalunya des de REE/ESIOS,
-- descàrrega de temperatura històrica des d’Open-Meteo,
+- descàrrega de temperatura històrica i meteorologia enriquida des d’Open-Meteo,
 - preprocessat a format llarg amb lags explícits i horitzó de 24 hores (demanda),
+- preprocessat diari de generació renovable amb targets `solar_mwh`, `wind_mwh`, `hydro_mwh`, `renewable_total_mwh` i `renewable_share`,
 - splits temporals `train` / `val` / `test`,
 - baselines tabulars `Daily Naive`, `Ridge` i `XGBoost` (demanda),
 - baseline neuronal `MLP` (demanda),
+- benchmark renovable diari amb `XGBoost`, `MLP` i `GraphSAGE`, amb i sense externes,
 - fine-tuning few-shot per a `MLP` i `XGBoost`,
 - scripts de visualització i comparació de resultats.
 
-Els propers passos de desenvolupament (Roadmap):
+Propers passos possibles:
 
-- marc unificat d'avaluació de hardware/recursos (latència, throughput, pesos),
-- construcció de dades tipus graf associant per país segons correlació a `train`,
-- implementació del benchmark final per demanda amb `GraphSAGE`,
-- introducció del preprocessat diferenciat per a les generacions renovables,
-- entrenament `XGBoost` i `GraphSAGE` paral·lel sobre les renovables,
-- i figures d'anàlisi de resultats.
+- afegir figures específiques del benchmark renovable,
+- automatitzar l'export de taules renovables al document de la mateixa manera que el benchmark de demanda,
+- estudiar fonts meteorològiques de forecast històric per substituir la proxy perfecta,
+- incorporar Catalunya com a domini target quan el pipeline de dades regional estigui complet.
 
 Benchmark unificat de recursos per demanda:
 
@@ -195,6 +195,85 @@ Sortides:
 - `data/processed_long/train.parquet`
 - `data/processed_long/val.parquet`
 - `data/processed_long/test.parquet`
+
+### 4b. Benchmark diari de renovables
+
+Objectiu:
+
+- Predir generació renovable diària a horitzó `D+1`.
+- Mantenir el mateix protocol de transferència que demanda: entrenament en països font i avaluació `zero-shot` sobre Espanya (`ES`).
+- Comparar `XGBoost`, `MLP` i `GraphSAGE` amb i sense variables meteorològiques externes.
+
+Targets:
+
+- `solar_mwh`
+- `wind_mwh`
+- `hydro_mwh`
+- `renewable_total_mwh`
+- `renewable_share`
+
+Metodologia:
+
+- ENTSO-E aporta la generació per tecnologia.
+- La potència se transforma a energia diària amb `MWh = MW * durada_interval_h`.
+- `wind_mwh` agrega eòlica terrestre i marina.
+- `hydro_mwh` agrega hidràulica fluvial i d'embassament.
+- `renewable_total_mwh` exclou bombeig (`Hydro Pumped Storage`) i residus (`Waste`).
+- Les variables externes provenen d'Open-Meteo, agregant diverses ciutats representatives per país.
+- La meteorologia del dia objectiu `D+1` s'usa com a proxy perfecta d'una previsió meteorològica day-ahead.
+
+Sense variables externes:
+
+```bash
+python src/data/preprocess_renewables.py
+```
+
+Amb meteorologia enriquida d'Open-Meteo com a proxy day-ahead perfecta:
+
+```bash
+python src/data/download_weather_enriched.py
+python src/data/preprocess_renewables.py --include_external
+```
+
+Sortides:
+
+- `data/processed_renewables_daily/train.parquet`
+- `data/processed_renewables_daily/val.parquet`
+- `data/processed_renewables_daily/test.parquet`
+
+Execució completa del benchmark:
+
+```bash
+python src/run_renewables_benchmark.py \
+  --models xgboost mlp graphsage \
+  --feature_sets no_external external \
+  --xgb_estimators 100 \
+  --torch_epochs 100 \
+  --torch_patience 10 \
+  --batch_size 256 \
+  --log_every 10
+```
+
+Prova curta de funcionament:
+
+```bash
+python src/run_renewables_benchmark.py \
+  --models xgboost \
+  --feature_sets no_external \
+  --xgb_estimators 2
+```
+
+Resultats:
+
+- `artifacts/metrics/renewables_resource_benchmark/renewables_resource_benchmark_seed42.csv`
+- `artifacts/metrics/renewables_resource_benchmark/renewables_resource_benchmark_seed42.json`
+- models entrenats sota `artifacts/models/renewables_*`
+
+Les mètriques principals són:
+
+- MAE/RMSE/MAPE normalitzats i en escala original.
+- MAE per target (`solar`, `wind`, `hydro`, `renewable_total`, `renewable_share`).
+- temps d'entrenament, memòria, mida de model, latència i throughput.
 
 ### 5. Entrenar baselines clàssics
 
