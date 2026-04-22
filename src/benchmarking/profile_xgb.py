@@ -19,6 +19,8 @@ if str(ROOT) not in sys.path:
 
 from src.benchmarking.common import (
     ModelBenchmarkOutput,
+    build_conformal_interval_report,
+    build_prediction_interval_frame,
     compute_metrics,
     current_rss_mb,
     model_size_mb,
@@ -161,6 +163,41 @@ def main() -> None:
         }.items()
     }
 
+    prediction_intervals = build_conformal_interval_report(
+        calibrations={
+            "source_val": (y_source_val, predictions["source_val"]),
+            "target_val": (y_target_val, predictions["target_val"]),
+        },
+        evaluations={
+            "source_test": (y_source_test, predictions["source_test"]),
+            "target_test": (y_target_test, predictions["target_test"]),
+        },
+        target_params=target_params,
+        target_cols=y_cols,
+        alpha=0.05,
+    )
+    interval_frames = []
+    for calibration_name, calibration_payload in prediction_intervals["calibrations"].items():
+        quantiles_norm = np.asarray(calibration_payload["quantiles_norm"], dtype=np.float32)
+        for split_name, frame, y_true, y_pred in [
+            ("source_test", source_test, y_source_test, predictions["source_test"]),
+            ("target_test", target_test, y_target_test, predictions["target_test"]),
+        ]:
+            interval_frames.append(
+                build_prediction_interval_frame(
+                    model_name="xgboost",
+                    split_name=split_name,
+                    calibration_name=calibration_name,
+                    metadata=frame,
+                    y_true_norm=y_true,
+                    y_pred_norm=y_pred,
+                    quantiles_norm=quantiles_norm,
+                    target_params=target_params,
+                    target_cols=y_cols,
+                    alpha=0.05,
+                )
+            )
+
     profile = {
         "source_test": profile_numpy_batches(
             X_source_test,
@@ -181,7 +218,9 @@ def main() -> None:
 
     model_path = MODELS_DIR / f"resource_xgb_seed{args.seed}.json"
     meta_path = MODELS_DIR / f"resource_xgb_seed{args.seed}_meta.json"
+    intervals_path = args.output.with_name(f"{args.output.stem}_prediction_intervals.parquet")
     model.save_model(str(model_path))
+    pd.concat(interval_frames, ignore_index=True).to_parquet(intervals_path, index=False)
     save_json(
         meta_path,
         {
@@ -206,10 +245,16 @@ def main() -> None:
         train_time_s=train_time_s,
         fit_metrics=metrics,
         inference=profile,
-        artifact_paths={"model": str(model_path), "metadata": str(meta_path)},
+        artifact_paths={
+            "model": str(model_path),
+            "metadata": str(meta_path),
+            "prediction_intervals": str(intervals_path),
+        },
     )
 
-    save_json(args.output, output.to_dict())
+    payload = output.to_dict()
+    payload["prediction_intervals"] = prediction_intervals
+    save_json(args.output, payload)
     print(f"[XGBoost] Saved -> {args.output}", flush=True)
 
 

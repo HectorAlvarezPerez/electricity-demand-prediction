@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 
@@ -16,6 +17,8 @@ if str(ROOT) not in sys.path:
 
 from src.benchmarking.common import (
     ModelBenchmarkOutput,
+    build_conformal_interval_report,
+    build_prediction_interval_frame,
     compute_metrics,
     current_rss_mb,
     cuda_peak_mb,
@@ -224,6 +227,41 @@ def main() -> None:
         "target_test": compute_metrics(target_test_targets, target_test_preds),
     }
 
+    prediction_intervals = build_conformal_interval_report(
+        calibrations={
+            "source_val": (source_val_targets, source_val_preds),
+            "target_val": (target_val_targets, target_val_preds),
+        },
+        evaluations={
+            "source_test": (source_test_targets, source_test_preds),
+            "target_test": (target_test_targets, target_test_preds),
+        },
+        target_params=target_params,
+        target_cols=y_cols,
+        alpha=0.05,
+    )
+    interval_frames = []
+    for calibration_name, calibration_payload in prediction_intervals["calibrations"].items():
+        quantiles_norm = np.asarray(calibration_payload["quantiles_norm"], dtype=np.float32)
+        for split_name, frame, y_true, y_pred in [
+            ("source_test", source_test_scaled, source_test_targets, source_test_preds),
+            ("target_test", target_test_scaled, target_test_targets, target_test_preds),
+        ]:
+            interval_frames.append(
+                build_prediction_interval_frame(
+                    model_name="mlp",
+                    split_name=split_name,
+                    calibration_name=calibration_name,
+                    metadata=frame,
+                    y_true_norm=y_true,
+                    y_pred_norm=y_pred,
+                    quantiles_norm=quantiles_norm,
+                    target_params=target_params,
+                    target_cols=y_cols,
+                    alpha=0.05,
+                )
+            )
+
     def infer_batch(batch_data: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         x, _ = batch_data
         return model(x.to(device)).detach().cpu()
@@ -244,6 +282,8 @@ def main() -> None:
     }
 
     model_path = MODELS_DIR / f"resource_mlp_seed{args.seed}.pt"
+    intervals_path = args.output.with_name(f"{args.output.stem}_prediction_intervals.parquet")
+    pd.concat(interval_frames, ignore_index=True).to_parquet(intervals_path, index=False)
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -269,7 +309,7 @@ def main() -> None:
         train_time_s=train_time_s,
         fit_metrics=metrics,
         inference=profile,
-        artifact_paths={"model": str(model_path)},
+        artifact_paths={"model": str(model_path), "prediction_intervals": str(intervals_path)},
     )
 
     # Add the extra scalar losses for traceability.
@@ -281,6 +321,7 @@ def main() -> None:
         "target_val": float(target_val_loss),
         "target_test": float(target_test_loss),
     }
+    payload["prediction_intervals"] = prediction_intervals
     save_json(args.output, payload)
     print(f"[MLP] Saved -> {args.output}", flush=True)
 

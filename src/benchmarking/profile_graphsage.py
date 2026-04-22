@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 
@@ -16,6 +17,8 @@ if str(ROOT) not in sys.path:
 
 from src.benchmarking.common import (
     ModelBenchmarkOutput,
+    build_conformal_interval_report,
+    build_prediction_interval_frame,
     compute_metrics,
     current_rss_mb,
     cuda_peak_mb,
@@ -26,8 +29,9 @@ from src.benchmarking.common import (
     trainable_parameter_count,
 )
 from src.data.graph_dataset import get_graph_dataloaders
+from src.data.preprocess import ALL_CODES, TARGET_CODE
 from src.models.graphsage import GraphSAGEBaseline
-from src.paths import METRICS_DIR, MODELS_DIR, ensure_artifact_dirs
+from src.paths import METRICS_DIR, MODELS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,6 +103,20 @@ def evaluate(model: nn.Module, loader, criterion: nn.Module, device: torch.devic
     return avg_loss, preds, targets
 
 
+def graph_prediction_metadata(split_name: str, mask_name: str) -> pd.DataFrame:
+    nodes = sorted(list(set(ALL_CODES)))
+    selected_codes = [code for code in nodes if (code != TARGET_CODE if mask_name == "source_mask" else code == TARGET_CODE)]
+
+    df = pd.read_parquet(PROCESSED_DATA_DIR / f"{split_name}.parquet")
+    df = df.copy()
+    df["country_code"] = pd.Categorical(df["country_code"], categories=nodes, ordered=True)
+    df = df.sort_values(["utc_timestamp", "country_code"])
+    counts = df.groupby("utc_timestamp", observed=False).size()
+    valid_ts = counts[counts == len(nodes)].index
+    metadata = df[df["utc_timestamp"].isin(valid_ts) & df["country_code"].isin(selected_codes)]
+    return metadata[["utc_timestamp", "country_code"]].reset_index(drop=True)
+
+
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
@@ -166,6 +184,43 @@ def main() -> None:
         "target_test": compute_metrics(target_test_targets, target_test_preds),
     }
 
+    prediction_intervals = build_conformal_interval_report(
+        calibrations={
+            "source_val": (source_val_targets, source_val_preds),
+            "target_val": (target_val_targets, target_val_preds),
+        },
+        evaluations={
+            "source_test": (source_test_targets, source_test_preds),
+            "target_test": (target_test_targets, target_test_preds),
+        },
+        target_params=target_params,
+        target_cols=target_cols,
+        alpha=0.05,
+    )
+    source_test_metadata = graph_prediction_metadata("test", "source_mask")
+    target_test_metadata = graph_prediction_metadata("test", "target_mask")
+    interval_frames = []
+    for calibration_name, calibration_payload in prediction_intervals["calibrations"].items():
+        quantiles_norm = np.asarray(calibration_payload["quantiles_norm"], dtype=np.float32)
+        for split_name, metadata, y_true, y_pred in [
+            ("source_test", source_test_metadata, source_test_targets, source_test_preds),
+            ("target_test", target_test_metadata, target_test_targets, target_test_preds),
+        ]:
+            interval_frames.append(
+                build_prediction_interval_frame(
+                    model_name="graphsage",
+                    split_name=split_name,
+                    calibration_name=calibration_name,
+                    metadata=metadata,
+                    y_true_norm=y_true,
+                    y_pred_norm=y_pred,
+                    quantiles_norm=quantiles_norm,
+                    target_params=target_params,
+                    target_cols=target_cols,
+                    alpha=0.05,
+                )
+            )
+
     profile = {
         "source_test": profile_torch_batches(
             test_loader,
@@ -182,6 +237,8 @@ def main() -> None:
     }
 
     model_path = MODELS_DIR / f"resource_graphsage_seed{args.seed}.pt"
+    intervals_path = args.output.with_name(f"{args.output.stem}_prediction_intervals.parquet")
+    pd.concat(interval_frames, ignore_index=True).to_parquet(intervals_path, index=False)
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -207,7 +264,7 @@ def main() -> None:
         train_time_s=train_time_s,
         fit_metrics=metrics,
         inference=profile,
-        artifact_paths={"model": str(model_path)},
+        artifact_paths={"model": str(model_path), "prediction_intervals": str(intervals_path)},
     )
 
     payload = output.to_dict()
@@ -218,6 +275,7 @@ def main() -> None:
         "target_val": float(target_val_loss),
         "target_test": float(target_test_loss),
     }
+    payload["prediction_intervals"] = prediction_intervals
     save_json(args.output, payload)
     print(f"[GraphSAGE] Saved -> {args.output}", flush=True)
 

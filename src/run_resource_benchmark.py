@@ -78,6 +78,13 @@ def flatten_metrics(model_name: str, payload: dict) -> dict:
     for split_name, loss in payload.get("losses", {}).items():
         row[f"loss_{split_name}"] = loss
 
+    interval_metrics = payload.get("prediction_intervals", {}).get("metrics", {})
+    for calibration_name, calibration_payload in interval_metrics.items():
+        for split_name, split_payload in calibration_payload.items():
+            for scale_name, metrics in split_payload.items():
+                for metric_name, value in metrics.items():
+                    row[f"interval_{calibration_name}_{split_name}_{scale_name}_{metric_name}"] = value
+
     return row
 
 
