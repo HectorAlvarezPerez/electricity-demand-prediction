@@ -26,6 +26,7 @@ AUTO_END = "% END_RESOURCE_BENCHMARK_AUTO"
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Export the resource benchmark to a LaTeX fragment")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--multiseed", action="store_true", help="Use resource_benchmark_multiseed.json if available")
     return p.parse_args()
 
 
@@ -43,6 +44,16 @@ def _fmt(value, digits: int = 3) -> str:
     return f"{value:.{digits}f}"
 
 
+def _fmt_pm(mean, std, digits: int = 3) -> str:
+    return f"{_fmt(mean, digits)} $\\pm$ {_fmt(std, digits)}"
+
+
+def _fmt_ci(ci: dict | None, digits: int = 1) -> str:
+    if not ci:
+        return "--"
+    return f"[{_fmt(ci.get('ci_low'), digits)}, {_fmt(ci.get('ci_high'), digits)}]"
+
+
 def load_payload(seed: int) -> dict:
     summary_json = METRICS_DIR / "resource_benchmark" / f"resource_benchmark_seed{seed}.json"
     if not summary_json.exists():
@@ -53,10 +64,21 @@ def load_payload(seed: int) -> dict:
         return json.load(f)
 
 
+def load_multiseed_payload() -> dict:
+    summary_json = METRICS_DIR / "resource_benchmark" / "resource_benchmark_multiseed.json"
+    if not summary_json.exists():
+        raise FileNotFoundError(
+            f"Missing multi-seed benchmark summary: {summary_json}. Run src/run_resource_benchmark.py --seeds ... first."
+        )
+    with open(summary_json, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def extract_rows(payload: dict) -> list[dict]:
     rows = []
     for model_name, model_payload in payload["models"].items():
         fit = model_payload["fit_metrics"]
+        fit_raw = model_payload.get("fit_metrics_raw", {})
         inference = model_payload["inference"]
         interval_metrics = model_payload.get("prediction_intervals", {}).get("metrics", {})
         source_calibrated = interval_metrics.get("source_val", {}).get("target_test", {}).get("mw", {})
@@ -72,7 +94,7 @@ def extract_rows(payload: dict) -> list[dict]:
             "source_test_rmse": fit["source_test"]["rmse"],
             "target_test_mae": fit["target_test"]["mae"],
             "target_test_rmse": fit["target_test"]["rmse"],
-            "target_test_mape": fit["target_test"]["mape"],
+            "target_test_mape": fit_raw.get("target_test", fit["target_test"])["mape"],
             "train_time_s": model_payload["train_time_s"],
             "peak_rss_mb": model_payload["peak_rss_mb"],
             "peak_vram_mb": model_payload.get("peak_vram_mb"),
@@ -89,6 +111,61 @@ def extract_rows(payload: dict) -> list[dict]:
             "target_calib_interval_score_mw": target_calibrated.get("interval_score", float("nan")),
         }
         rows.append(row)
+    return rows
+
+
+def extract_multiseed_rows(payload: dict) -> list[dict]:
+    pretty_name = {
+        "xgboost": "XGBoost",
+        "mlp": "MLP",
+        "graphsage": "GraphSAGE",
+    }
+    bootstrap = payload.get("bootstrap_target_mae_mw", {})
+    rows = []
+    for row in payload["aggregate"]:
+        model_key = row["model_name"]
+        rows.append(
+            {
+                "model_name": pretty_name.get(model_key, model_key),
+                "model_key": model_key,
+                "n_seeds": row["n_seeds"],
+                "source_test_mae": row.get("source_test_mae_mean"),
+                "source_test_mae_std": row.get("source_test_mae_std", 0.0),
+                "source_test_rmse": row.get("source_test_rmse_mean"),
+                "source_test_rmse_std": row.get("source_test_rmse_std", 0.0),
+                "target_test_mae": row.get("target_test_mae_mean"),
+                "target_test_mae_std": row.get("target_test_mae_std", 0.0),
+                "target_test_rmse": row.get("target_test_rmse_mean"),
+                "target_test_rmse_std": row.get("target_test_rmse_std", 0.0),
+                "target_test_mape": row.get("raw_target_test_mape_mean"),
+                "target_test_mape_std": row.get("raw_target_test_mape_std", 0.0),
+                "train_time_s": row.get("train_time_s_mean"),
+                "train_time_s_std": row.get("train_time_s_std", 0.0),
+                "peak_rss_mb": row.get("peak_rss_mb_mean"),
+                "peak_rss_mb_std": row.get("peak_rss_mb_std", 0.0),
+                "model_size_mb": row.get("model_size_mb_mean"),
+                "model_size_mb_std": row.get("model_size_mb_std", 0.0),
+                "target_inf_mean_ms": row.get("inference_target_test_mean_ms_mean"),
+                "target_inf_mean_ms_std": row.get("inference_target_test_mean_ms_std", 0.0),
+                "target_inf_p95_ms": row.get("inference_target_test_p95_ms_mean"),
+                "target_inf_p95_ms_std": row.get("inference_target_test_p95_ms_std", 0.0),
+                "target_throughput": row.get("inference_target_test_throughput_samples_s_mean"),
+                "target_throughput_std": row.get("inference_target_test_throughput_samples_s_std", 0.0),
+                "source_calib_coverage_95": row.get("interval_source_val_target_test_mw_coverage_95_mean", float("nan")),
+                "source_calib_coverage_95_std": row.get("interval_source_val_target_test_mw_coverage_95_std", 0.0),
+                "source_calib_mean_width_mw": row.get("interval_source_val_target_test_mw_mean_width_mean", float("nan")),
+                "source_calib_mean_width_mw_std": row.get("interval_source_val_target_test_mw_mean_width_std", 0.0),
+                "source_calib_interval_score_mw": row.get("interval_source_val_target_test_mw_interval_score_mean", float("nan")),
+                "source_calib_interval_score_mw_std": row.get("interval_source_val_target_test_mw_interval_score_std", 0.0),
+                "target_calib_coverage_95": row.get("interval_target_val_target_test_mw_coverage_95_mean", float("nan")),
+                "target_calib_coverage_95_std": row.get("interval_target_val_target_test_mw_coverage_95_std", 0.0),
+                "target_calib_mean_width_mw": row.get("interval_target_val_target_test_mw_mean_width_mean", float("nan")),
+                "target_calib_mean_width_mw_std": row.get("interval_target_val_target_test_mw_mean_width_std", 0.0),
+                "target_calib_interval_score_mw": row.get("interval_target_val_target_test_mw_interval_score_mean", float("nan")),
+                "target_calib_interval_score_mw_std": row.get("interval_target_val_target_test_mw_interval_score_std", 0.0),
+                "target_mae_mw_ci": bootstrap.get(model_key),
+            }
+        )
     return rows
 
 
@@ -156,13 +233,22 @@ def write_interval_figure(rows: list[dict]) -> None:
     plt.close(fig)
 
 
-def render_report_block(rows: list[dict]) -> str:
+def render_report_block(rows: list[dict], *, multiseed: bool = False, seeds: list[int] | None = None) -> str:
     lines: list[str] = []
     lines.append("\\paragraph{Resultats del benchmark.}")
-    lines.append(
-        "Les taules següents resumeixen els resultats del benchmark unificat de recursos per als tres models avaluats. "
-        "La figura associada compara el cost d'entrenament, la memòria i la latència d'inferència amb l'error final sobre el test objectiu."
-    )
+    if multiseed:
+        seed_text = ", ".join(str(seed) for seed in seeds or [])
+        lines.append(
+            "Les taules següents resumeixen el benchmark unificat amb robustesa estadística sobre tres llavors "
+            f"(\\texttt{{{seed_text}}}). Les mètriques principals es reporten com a mitjana $\\pm$ desviació estàndard; "
+            "a més, el MAE físic sobre el test objectiu incorpora un interval de confiança bootstrap al 95\\%. "
+            "Aquest protocol millora la solidesa empírica dels models neuronals, però no constitueix una prova de significança estadística exhaustiva."
+        )
+    else:
+        lines.append(
+            "Les taules següents resumeixen els resultats del benchmark unificat de recursos per als tres models avaluats. "
+            "La figura associada compara el cost d'entrenament, la memòria i la latència d'inferència amb l'error final sobre el test objectiu."
+        )
     lines.append("\\begin{figure}[htbp]")
     lines.append("    \\centering")
     lines.append("    \\includegraphics[width=0.96\\textwidth]{../figures/resource_benchmark_comparison.png}")
@@ -204,10 +290,25 @@ def render_report_block(rows: list[dict]) -> str:
     )
     lines.append("        \\midrule")
     for r in rows:
+        if multiseed:
+            target_mae = _fmt_pm(r["target_test_mae"], r["target_test_mae_std"])
+            source_cov = _fmt_pm(r["source_calib_coverage_95"] * 100.0, r["source_calib_coverage_95_std"] * 100.0, 2) + "\\%"
+            source_width = _fmt_pm(r["source_calib_mean_width_mw"], r["source_calib_mean_width_mw_std"], 1)
+            source_score = _fmt_pm(r["source_calib_interval_score_mw"], r["source_calib_interval_score_mw_std"], 1)
+            target_cov = _fmt_pm(r["target_calib_coverage_95"] * 100.0, r["target_calib_coverage_95_std"] * 100.0, 2) + "\\%"
+            target_width = _fmt_pm(r["target_calib_mean_width_mw"], r["target_calib_mean_width_mw_std"], 1)
+            target_score = _fmt_pm(r["target_calib_interval_score_mw"], r["target_calib_interval_score_mw_std"], 1)
+        else:
+            target_mae = _fmt(r["target_test_mae"])
+            source_cov = f"{_fmt(r['source_calib_coverage_95'] * 100.0, 2)}\\%"
+            source_width = _fmt(r["source_calib_mean_width_mw"], 1)
+            source_score = _fmt(r["source_calib_interval_score_mw"], 1)
+            target_cov = f"{_fmt(r['target_calib_coverage_95'] * 100.0, 2)}\\%"
+            target_width = _fmt(r["target_calib_mean_width_mw"], 1)
+            target_score = _fmt(r["target_calib_interval_score_mw"], 1)
         lines.append(
-            f"        {r['model_name']} & {_fmt(r['target_test_mae'])} & "
-            f"{_fmt(r['source_calib_coverage_95'] * 100.0, 2)}\\% & {_fmt(r['source_calib_mean_width_mw'], 1)} & {_fmt(r['source_calib_interval_score_mw'], 1)} & "
-            f"{_fmt(r['target_calib_coverage_95'] * 100.0, 2)}\\% & {_fmt(r['target_calib_mean_width_mw'], 1)} & {_fmt(r['target_calib_interval_score_mw'], 1)} \\\\"
+            f"        {r['model_name']} & {target_mae} & {source_cov} & {source_width} & {source_score} & "
+            f"{target_cov} & {target_width} & {target_score} \\\\"
         )
     lines.append("        \\bottomrule")
     lines.append("    \\end{tabular}%")
@@ -224,22 +325,44 @@ def render_report_block(rows: list[dict]) -> str:
     lines.append("    \\centering")
     lines.append("    \\small")
     lines.append("    \\resizebox{0.98\\textwidth}{!}{%")
-    lines.append("    \\begin{tabular}{lrrrrrrrr}")
+    lines.append("    \\begin{tabular}{lrrrrrrrrr}")
     lines.append("        \\toprule")
     lines.append(
-        "        Model & Target MAE & Target RMSE & Target MAPE & Train time (s) & Peak RSS (MB) & Inference mean (ms) & Throughput (samples/s) & Size (MB) \\\\"
+        "        Model & Target MAE & Target RMSE & Target MAPE & MAE MW IC95 & Train time (s) & Peak RSS (MB) & Inference mean (ms) & Throughput (samples/s) & Size (MB) \\\\"
     )
     lines.append("        \\midrule")
     for r in rows:
-        lines.append(
-            f"        {r['model_name']} & {_fmt(r['target_test_mae'])} & {_fmt(r['target_test_rmse'])} & {_fmt(r['target_test_mape'])} & "
-            f"{_fmt(r['train_time_s'])} & {_fmt(r['peak_rss_mb'])} & {_fmt(r['target_inf_mean_ms'])} & {_fmt(r['target_throughput'])} & {_fmt(r['model_size_mb'])} \\\\"
-        )
+        if multiseed:
+            values = [
+                _fmt_pm(r["target_test_mae"], r["target_test_mae_std"]),
+                _fmt_pm(r["target_test_rmse"], r["target_test_rmse_std"]),
+                _fmt_pm(r["target_test_mape"], r["target_test_mape_std"]),
+                _fmt_ci(r.get("target_mae_mw_ci"), 1),
+                _fmt_pm(r["train_time_s"], r["train_time_s_std"]),
+                _fmt_pm(r["peak_rss_mb"], r["peak_rss_mb_std"]),
+                _fmt_pm(r["target_inf_mean_ms"], r["target_inf_mean_ms_std"]),
+                _fmt_pm(r["target_throughput"], r["target_throughput_std"]),
+                _fmt_pm(r["model_size_mb"], r["model_size_mb_std"]),
+            ]
+        else:
+            values = [
+                _fmt(r["target_test_mae"]),
+                _fmt(r["target_test_rmse"]),
+                _fmt(r["target_test_mape"]),
+                "--",
+                _fmt(r["train_time_s"]),
+                _fmt(r["peak_rss_mb"]),
+                _fmt(r["target_inf_mean_ms"]),
+                _fmt(r["target_throughput"]),
+                _fmt(r["model_size_mb"]),
+            ]
+        lines.append(f"        {r['model_name']} & " + " & ".join(values) + " \\\\")
     lines.append("        \\bottomrule")
     lines.append("    \\end{tabular}%")
     lines.append("    }")
     lines.append(
         "    \\caption{Resum numèric del benchmark unificat de recursos i precisió sobre el test objectiu. "
+        "MAE i RMSE es mantenen en escala normalitzada; el MAPE i l'interval bootstrap del MAE es calculen en escala física. "
         "Les mètriques de latència corresponen a la mitjana per batch i s'expressen en mil·lisegons.}"
     )
     lines.append("    \\label{tab:resource_benchmark_summary}")
@@ -254,8 +377,15 @@ def render_report_block(rows: list[dict]) -> str:
     lines.append("        Model & Source test MAE & Source test RMSE & Inference p95 (ms) \\\\")
     lines.append("        \\midrule")
     for r in rows:
-        lines.append(
-            f"        {r['model_name']} & {_fmt(r['source_test_mae'])} & {_fmt(r['source_test_rmse'])} & {_fmt(r['target_inf_p95_ms'])} \\\\")
+        if multiseed:
+            source_mae = _fmt_pm(r["source_test_mae"], r["source_test_mae_std"])
+            source_rmse = _fmt_pm(r["source_test_rmse"], r["source_test_rmse_std"])
+            p95 = _fmt_pm(r["target_inf_p95_ms"], r["target_inf_p95_ms_std"])
+        else:
+            source_mae = _fmt(r["source_test_mae"])
+            source_rmse = _fmt(r["source_test_rmse"])
+            p95 = _fmt(r["target_inf_p95_ms"])
+        lines.append(f"        {r['model_name']} & {source_mae} & {source_rmse} & {p95} \\\\")
     lines.append("        \\bottomrule")
     lines.append("    \\end{tabular}")
     lines.append(
@@ -290,11 +420,15 @@ def update_main_report(block: str) -> None:
 def main() -> None:
     args = parse_args()
     ensure_artifact_dirs()
-    payload = load_payload(args.seed)
-    rows = extract_rows(payload)
+    if args.multiseed:
+        payload = load_multiseed_payload()
+        rows = extract_multiseed_rows(payload)
+    else:
+        payload = load_payload(args.seed)
+        rows = extract_rows(payload)
     write_figure(rows)
     write_interval_figure(rows)
-    block = render_report_block(rows)
+    block = render_report_block(rows, multiseed=args.multiseed, seeds=payload.get("seeds"))
     update_main_report(block)
     print(f"Saved -> {OUT_FIG}")
     print(f"Saved -> {OUT_INTERVAL_FIG}")

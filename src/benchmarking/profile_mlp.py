@@ -20,6 +20,7 @@ from src.benchmarking.common import (
     build_conformal_interval_report,
     build_prediction_interval_frame,
     compute_metrics,
+    compute_metrics_with_denormalized_targets,
     current_rss_mb,
     cuda_peak_mb,
     model_size_mb,
@@ -226,6 +227,38 @@ def main() -> None:
         "target_val": compute_metrics(target_val_targets, target_val_preds),
         "target_test": compute_metrics(target_test_targets, target_test_preds),
     }
+    metrics_raw = {
+        "source_train": compute_metrics_with_denormalized_targets(
+            source_train_targets,
+            source_train_preds,
+            target_params=target_params,
+            target_cols=y_cols,
+        )["raw"],
+        "source_val": compute_metrics_with_denormalized_targets(
+            source_val_targets,
+            source_val_preds,
+            target_params=target_params,
+            target_cols=y_cols,
+        )["raw"],
+        "source_test": compute_metrics_with_denormalized_targets(
+            source_test_targets,
+            source_test_preds,
+            target_params=target_params,
+            target_cols=y_cols,
+        )["raw"],
+        "target_val": compute_metrics_with_denormalized_targets(
+            target_val_targets,
+            target_val_preds,
+            target_params=target_params,
+            target_cols=y_cols,
+        )["raw"],
+        "target_test": compute_metrics_with_denormalized_targets(
+            target_test_targets,
+            target_test_preds,
+            target_params=target_params,
+            target_cols=y_cols,
+        )["raw"],
+    }
 
     prediction_intervals = build_conformal_interval_report(
         calibrations={
@@ -314,6 +347,7 @@ def main() -> None:
 
     # Add the extra scalar losses for traceability.
     payload = output.to_dict()
+    payload["fit_metrics_raw"] = metrics_raw
     payload["losses"] = {
         "source_train": float(source_train_loss),
         "source_val": float(source_val_loss),

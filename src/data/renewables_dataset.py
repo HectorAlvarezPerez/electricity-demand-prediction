@@ -1,4 +1,4 @@
-"""Dataset loaders for the daily renewables benchmark."""
+"""Dataset loaders for the hourly renewables benchmark."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -115,7 +115,7 @@ def get_tabular_dataloaders(
 
 
 def build_static_graph(train_df: pd.DataFrame, nodes: list[str], top_k: int = 3) -> tuple[torch.Tensor, torch.Tensor]:
-    pivot = train_df.pivot(index="date", columns="country_code", values="renewable_total_mwh").reindex(columns=nodes)
+    pivot = train_df.pivot(index="utc_timestamp", columns="country_code", values="renewable_total_mwh").reindex(columns=nodes)
     corr = pivot.corr().fillna(0.0).to_numpy()
     edges: dict[tuple[int, int], float] = {}
     for i in range(len(nodes)):
@@ -148,11 +148,11 @@ def extract_graphs(
 ) -> list[Data]:
     df = df.copy()
     df["country_code"] = pd.Categorical(df["country_code"], categories=nodes, ordered=True)
-    df = df.sort_values(["date", "country_code"])
-    counts = df.groupby("date", observed=False).size()
-    valid_dates = counts[counts == len(nodes)].index
-    df = df[df["date"].isin(valid_dates)]
-    n_dates = len(valid_dates)
+    df = df.sort_values(["utc_timestamp", "country_code"])
+    counts = df.groupby("utc_timestamp", observed=False).size()
+    valid_timestamps = counts[counts == len(nodes)].index
+    df = df[df["utc_timestamp"].isin(valid_timestamps)]
+    n_dates = len(valid_timestamps)
     n_nodes = len(nodes)
     x = df[x_cols].to_numpy(dtype=np.float32).reshape(n_dates, n_nodes, len(x_cols))
     y = df[y_cols].to_numpy(dtype=np.float32).reshape(n_dates, n_nodes, len(y_cols))

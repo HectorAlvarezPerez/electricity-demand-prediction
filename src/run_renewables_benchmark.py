@@ -1,4 +1,4 @@
-"""Run daily renewables benchmarks for no-external and external feature sets."""
+"""Run hourly renewables benchmarks for no-external and external feature sets."""
 from __future__ import annotations
 
 import argparse
@@ -15,13 +15,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.benchmarking.common import aggregate_numeric_by_group, bootstrap_mae_ci
 from src.paths import METRICS_DIR, ensure_artifact_dirs
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run the daily renewables resource benchmark")
+    p = argparse.ArgumentParser(description="Run the hourly renewables resource benchmark")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--data_dir", type=Path, default=ROOT / "data" / "processed_renewables_daily")
+    p.add_argument("--seeds", type=int, nargs="+", default=None, help="Run and aggregate multiple seeds")
+    p.add_argument("--data_dir", type=Path, default=ROOT / "data" / "processed_renewables_hourly")
     p.add_argument("--output_dir", type=Path, default=METRICS_DIR / "renewables_resource_benchmark")
     p.add_argument("--models", nargs="+", choices=["xgboost", "mlp", "graphsage"], default=["xgboost", "mlp", "graphsage"])
     p.add_argument("--feature_sets", nargs="+", choices=["no_external", "external"], default=["no_external", "external"])
@@ -38,14 +40,14 @@ def log(message: str) -> None:
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
 
-def run_profile(args: argparse.Namespace, model: str, feature_set: str, output: Path) -> None:
+def run_profile(args: argparse.Namespace, model: str, feature_set: str, seed: int, output: Path) -> None:
     cmd = [
         sys.executable,
         str(ROOT / "src" / "benchmarking" / "profile_renewables.py"),
         "--model",
         model,
         "--seed",
-        str(args.seed),
+        str(seed),
         "--data_dir",
         str(args.data_dir),
         "--batch_size",
@@ -98,16 +100,64 @@ def flatten_payload(model: str, feature_set: str, payload: dict) -> dict:
     return row
 
 
-def main() -> None:
-    args = parse_args()
-    ensure_artifact_dirs()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+def aggregate_seed_rows(rows: list[dict]) -> list[dict]:
+    metric_keys = [
+        "raw_target_test_mae",
+        "raw_target_test_rmse",
+        "raw_target_test_mape",
+        "target_raw_target_test_y_solar_mwh_mae",
+        "target_raw_target_test_y_wind_mwh_mae",
+        "target_raw_target_test_y_hydro_mwh_mae",
+        "target_raw_target_test_y_renewable_total_mwh_mae",
+        "train_time_s",
+        "peak_rss_mb",
+        "model_size_mb",
+        "inference_target_test_mean_ms",
+        "inference_target_test_p95_ms",
+        "inference_target_test_throughput_samples_s",
+    ]
+    available = [key for key in metric_keys if any(key in row for row in rows)]
+    return aggregate_numeric_by_group(rows, group_keys=["model_name", "feature_set"], metric_keys=available)
+
+
+def bootstrap_target_mae(output_dir: Path, seeds: list[int], models: list[str], feature_sets: list[str]) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for feature_set in feature_sets:
+        for model in models:
+            frames = []
+            for seed in seeds:
+                path = output_dir / f"{model}_{feature_set}_seed{seed}_target_test_predictions.parquet"
+                if path.exists():
+                    frames.append(pd.read_parquet(path, columns=["target", "y_true", "pred"]))
+            if not frames:
+                continue
+            data = pd.concat(frames, ignore_index=True)
+            key = f"{model}_{feature_set}"
+            result[key] = {
+                "overall": bootstrap_mae_ci(
+                    data["y_true"].to_numpy(),
+                    data["pred"].to_numpy(),
+                    n_bootstrap=1000,
+                    seed=12345,
+                )
+            }
+            for target_name, target_df in data.groupby("target", sort=False):
+                result[key][target_name] = bootstrap_mae_ci(
+                    target_df["y_true"].to_numpy(),
+                    target_df["pred"].to_numpy(),
+                    n_bootstrap=1000,
+                    seed=12345,
+                )
+    return result
+
+
+def run_seed(args: argparse.Namespace, seed: int) -> dict[str, dict]:
     outputs: dict[tuple[str, str], Path] = {}
     for feature_set in args.feature_sets:
         for model in args.models:
-            output = args.output_dir / f"{model}_{feature_set}_seed{args.seed}.json"
+            output = args.output_dir / f"{model}_{feature_set}_seed{seed}.json"
             outputs[(model, feature_set)] = output
-            run_profile(args, model, feature_set, output)
+            run_profile(args, model, feature_set, seed, output)
 
     payloads = {
         f"{model}_{feature_set}": json.loads(path.read_text())
@@ -117,13 +167,51 @@ def main() -> None:
         flatten_payload(model, feature_set, payloads[f"{model}_{feature_set}"])
         for (model, feature_set) in outputs
     ]
-    summary_json = args.output_dir / f"renewables_resource_benchmark_seed{args.seed}.json"
-    summary_csv = args.output_dir / f"renewables_resource_benchmark_seed{args.seed}.csv"
+    summary_json = args.output_dir / f"renewables_resource_benchmark_seed{seed}.json"
+    summary_csv = args.output_dir / f"renewables_resource_benchmark_seed{seed}.csv"
     with open(summary_json, "w", encoding="utf-8") as f:
-        json.dump({"seed": args.seed, "models": payloads}, f, indent=2, ensure_ascii=False)
+        json.dump({"seed": seed, "models": payloads}, f, indent=2, ensure_ascii=False)
     pd.DataFrame(rows).to_csv(summary_csv, index=False)
     log(f"Saved -> {summary_json}")
     log(f"Saved -> {summary_csv}")
+    return payloads
+
+
+def main() -> None:
+    args = parse_args()
+    seeds = args.seeds or [args.seed]
+    ensure_artifact_dirs()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    all_payloads: dict[str, dict[str, dict]] = {}
+    all_rows: list[dict] = []
+    for seed in seeds:
+        log(f"Running renewables benchmark seed={seed}")
+        payloads = run_seed(args, seed)
+        all_payloads[str(seed)] = payloads
+        for payload in payloads.values():
+            all_rows.append(flatten_payload(payload["model_name"], payload["feature_set"], payload))
+
+    if len(seeds) > 1:
+        aggregate_rows = aggregate_seed_rows(all_rows)
+        bootstrap = bootstrap_target_mae(args.output_dir, seeds, args.models, args.feature_sets)
+        summary_json = args.output_dir / "renewables_resource_benchmark_multiseed.json"
+        summary_csv = args.output_dir / "renewables_resource_benchmark_multiseed.csv"
+        with open(summary_json, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "seeds": seeds,
+                    "rows": all_rows,
+                    "aggregate": aggregate_rows,
+                    "bootstrap_target_mae": bootstrap,
+                    "models": all_payloads,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        pd.DataFrame(aggregate_rows).to_csv(summary_csv, index=False)
+        log(f"Saved -> {summary_json}")
+        log(f"Saved -> {summary_csv}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Profile daily renewables models with and without external weather features."""
+"""Profile hourly renewables models with and without external weather features."""
 from __future__ import annotations
 
 import argparse
@@ -11,6 +11,7 @@ from typing import Any
 
 import joblib
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from xgboost import XGBRegressor
@@ -31,6 +32,7 @@ from src.benchmarking.common import (
     save_json,
     trainable_parameter_count,
 )
+from src.data.preprocess import ALL_CODES, TARGET_CODE
 from src.data.renewables_dataset import get_graph_dataloaders, get_tabular_dataloaders
 from src.models.graphsage import GraphSAGEBaseline
 from src.models.mlp_baseline import MLPBaseline
@@ -38,11 +40,11 @@ from src.paths import METRICS_DIR, MODELS_DIR, ROOT as PROJECT_ROOT, ensure_arti
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Profile one daily renewables model")
+    p = argparse.ArgumentParser(description="Profile one hourly renewables model")
     p.add_argument("--model", choices=["xgboost", "mlp", "graphsage"], required=True)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--include_external", action="store_true")
-    p.add_argument("--data_dir", type=Path, default=PROJECT_ROOT / "data" / "processed_renewables_daily")
+    p.add_argument("--data_dir", type=Path, default=PROJECT_ROOT / "data" / "processed_renewables_hourly")
     p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--patience", type=int, default=20)
@@ -114,6 +116,52 @@ def metrics_by_target(y_true: np.ndarray, y_pred: np.ndarray, y_cols: list[str])
     }
 
 
+def build_prediction_frame(
+    *,
+    model_name: str,
+    feature_set: str,
+    seed: int,
+    split_name: str,
+    metadata: Any,
+    targets: np.ndarray,
+    preds: np.ndarray,
+    target_params: dict,
+    y_cols: list[str],
+) -> pd.DataFrame:
+    targets_raw = denormalize(targets, target_params, y_cols)
+    preds_raw = denormalize(preds, target_params, y_cols)
+    meta_cols = [col for col in ["utc_timestamp", "target_timestamp", "country_code"] if col in metadata.columns]
+    meta = metadata[meta_cols].reset_index(drop=True).copy()
+    if len(meta) != targets_raw.shape[0]:
+        raise ValueError(f"Metadata rows ({len(meta)}) do not match prediction rows ({targets_raw.shape[0]})")
+
+    frames = []
+    for idx, target_col in enumerate(y_cols):
+        frame = meta.copy()
+        frame["model_name"] = model_name
+        frame["feature_set"] = feature_set
+        frame["seed"] = seed
+        frame["split"] = split_name
+        frame["target"] = target_col
+        frame["y_true"] = targets_raw[:, idx]
+        frame["pred"] = preds_raw[:, idx]
+        frames.append(frame)
+    return pd.concat(frames, ignore_index=True)
+
+
+def graph_prediction_metadata(data_dir: Path, split_name: str, mask_name: str) -> pd.DataFrame:
+    nodes = sorted(list(set(ALL_CODES)))
+    selected_codes = [code for code in nodes if (code != TARGET_CODE if mask_name == "source_mask" else code == TARGET_CODE)]
+    df = pd.read_parquet(data_dir / f"{split_name}.parquet")
+    df = df.copy()
+    df["country_code"] = pd.Categorical(df["country_code"], categories=nodes, ordered=True)
+    df = df.sort_values(["utc_timestamp", "country_code"])
+    counts = df.groupby("utc_timestamp", observed=False).size()
+    valid_timestamps = counts[counts == len(nodes)].index
+    metadata = df[df["utc_timestamp"].isin(valid_timestamps) & df["country_code"].isin(selected_codes)]
+    return metadata[["utc_timestamp", "target_timestamp", "country_code"]].reset_index(drop=True)
+
+
 def metrics_bundle(
     targets: np.ndarray,
     preds: np.ndarray,
@@ -182,9 +230,24 @@ def train_xgboost(args: argparse.Namespace) -> dict:
     feature_set = "external" if args.include_external else "no_external"
     model_path = MODELS_DIR / f"renewables_xgboost_{feature_set}_seed{args.seed}.joblib"
     joblib.dump(model, model_path)
-    return build_payload(
+    payload = build_payload(
         args, "xgboost", x_cols, y_cols, None, None, model_path, train_time_s, metrics, raw_metrics, by_target, by_target_raw, profile
     )
+    feature_set = "external" if args.include_external else "no_external"
+    predictions_path = args.output.with_name(f"{args.output.stem}_target_test_predictions.parquet")
+    build_prediction_frame(
+        model_name="xgboost",
+        feature_set=feature_set,
+        seed=args.seed,
+        split_name="target_test",
+        metadata=frames["target_test"],
+        targets=arrays["target_test"][1],
+        preds=preds["target_test"],
+        target_params=target_params,
+        y_cols=y_cols,
+    ).to_parquet(predictions_path, index=False)
+    payload["artifact_paths"]["target_test_predictions"] = str(predictions_path)
+    return payload
 
 
 @torch.no_grad()
@@ -202,7 +265,7 @@ def evaluate_mlp(model: nn.Module, loader, criterion: nn.Module, device: torch.d
 
 
 def train_mlp(args: argparse.Namespace) -> dict:
-    loaders, _frames, x_cols, y_cols, _feature_params, target_params = get_tabular_dataloaders(
+    loaders, frames, x_cols, y_cols, _feature_params, target_params = get_tabular_dataloaders(
         args.data_dir,
         batch_size=args.batch_size,
         include_external=args.include_external,
@@ -242,8 +305,10 @@ def train_mlp(args: argparse.Namespace) -> dict:
         model.load_state_dict(best_state)
 
     metrics, raw_metrics, by_target, by_target_raw = {}, {}, {}, {}
+    eval_outputs = {}
     for name, loader in loaders.items():
         _loss, pred, target = evaluate_mlp(model, loader, criterion, device)
+        eval_outputs[name] = (pred, target)
         metrics[name], raw_metrics[name], by_target[name], by_target_raw[name] = metrics_bundle(
             target, pred, target_params, y_cols
         )
@@ -259,7 +324,7 @@ def train_mlp(args: argparse.Namespace) -> dict:
     feature_set = "external" if args.include_external else "no_external"
     model_path = MODELS_DIR / f"renewables_mlp_{feature_set}_seed{args.seed}.pt"
     torch.save({"model_state_dict": model.state_dict(), "args": vars(args), "feature_cols": x_cols, "target_cols": y_cols}, model_path)
-    return build_payload(
+    payload = build_payload(
         args,
         "mlp",
         x_cols,
@@ -274,6 +339,22 @@ def train_mlp(args: argparse.Namespace) -> dict:
         by_target_raw,
         profile,
     )
+    feature_set = "external" if args.include_external else "no_external"
+    predictions_path = args.output.with_name(f"{args.output.stem}_target_test_predictions.parquet")
+    target_pred, target_true = eval_outputs["target_test"]
+    build_prediction_frame(
+        model_name="mlp",
+        feature_set=feature_set,
+        seed=args.seed,
+        split_name="target_test",
+        metadata=frames["target_test"],
+        targets=target_true,
+        preds=target_pred,
+        target_params=target_params,
+        y_cols=y_cols,
+    ).to_parquet(predictions_path, index=False)
+    payload["artifact_paths"]["target_test_predictions"] = str(predictions_path)
+    return payload
 
 
 def train_graph_epoch(model: nn.Module, loader, optimizer, criterion, device) -> float:
@@ -347,8 +428,10 @@ def train_graphsage(args: argparse.Namespace) -> dict:
         "target_test": (loaders["test"], "target_mask"),
     }
     metrics, raw_metrics, by_target, by_target_raw = {}, {}, {}, {}
+    eval_outputs = {}
     for name, (loader, mask_name) in eval_specs.items():
         _loss, pred, target = evaluate_graph(model, loader, criterion, device, mask_name)
+        eval_outputs[name] = (pred, target)
         metrics[name], raw_metrics[name], by_target[name], by_target_raw[name] = metrics_bundle(
             target, pred, target_params, y_cols
         )
@@ -364,7 +447,7 @@ def train_graphsage(args: argparse.Namespace) -> dict:
     feature_set = "external" if args.include_external else "no_external"
     model_path = MODELS_DIR / f"renewables_graphsage_{feature_set}_seed{args.seed}.pt"
     torch.save({"model_state_dict": model.state_dict(), "args": vars(args), "feature_cols": x_cols, "target_cols": y_cols}, model_path)
-    return build_payload(
+    payload = build_payload(
         args,
         "graphsage",
         x_cols,
@@ -379,6 +462,22 @@ def train_graphsage(args: argparse.Namespace) -> dict:
         by_target_raw,
         profile,
     )
+    feature_set = "external" if args.include_external else "no_external"
+    predictions_path = args.output.with_name(f"{args.output.stem}_target_test_predictions.parquet")
+    target_pred, target_true = eval_outputs["target_test"]
+    build_prediction_frame(
+        model_name="graphsage",
+        feature_set=feature_set,
+        seed=args.seed,
+        split_name="target_test",
+        metadata=graph_prediction_metadata(args.data_dir, "test", "target_mask"),
+        targets=target_true,
+        preds=target_pred,
+        target_params=target_params,
+        y_cols=y_cols,
+    ).to_parquet(predictions_path, index=False)
+    payload["artifact_paths"]["target_test_predictions"] = str(predictions_path)
+    return payload
 
 
 def build_payload(
@@ -412,7 +511,7 @@ def build_payload(
         artifact_paths={"model": str(model_path)},
     )
     payload = output.to_dict()
-    payload["benchmark"] = "renewables_daily"
+    payload["benchmark"] = "renewables_hourly"
     payload["feature_set"] = "external" if args.include_external else "no_external"
     payload["fit_metrics_raw"] = raw_metrics
     payload["fit_metrics_by_target"] = by_target

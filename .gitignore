@@ -6,12 +6,20 @@ __pycache__/
 # Virtual Environments
 .env
 .venv
+.tmpvenv/
 env/
 venv/
 ENV/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+# Test, type-check and coverage caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # Data (Ignore large dataset files to prevent pushing them to GitHub)
 data/raw/*

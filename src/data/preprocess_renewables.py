@@ -1,7 +1,7 @@
-"""Build the daily renewables forecasting dataset.
+"""Build the hourly renewables forecasting dataset.
 
 The output is intentionally separate from the demand dataset:
-`data/processed_renewables_daily/{train,val,test}.parquet`.
+`data/processed_renewables_hourly/{train,val,test}.parquet`.
 """
 from __future__ import annotations
 
@@ -11,55 +11,58 @@ from pathlib import Path
 import pandas as pd
 
 from src.data.renewables import (
-    DAILY_EXTERNAL_COLUMNS,
-    RENEWABLE_TARGET_COLS,
+    HOURLY_EXTERNAL_COLUMNS,
     add_calendar_features,
     add_country_dummies,
-    add_day_ahead_targets,
+    add_hour_ahead_targets,
     add_lag_features,
     feature_columns,
-    load_all_generation_daily,
-    split_by_target_date,
+    load_all_generation_hourly,
+    split_by_target_timestamp,
     target_columns,
 )
 
 
 def parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[2]
-    p = argparse.ArgumentParser(description="Preprocess daily ENTSO-E renewables data")
+    p = argparse.ArgumentParser(description="Preprocess hourly ENTSO-E renewables data")
     p.add_argument("--generation_dir", type=Path, default=root / "data" / "raw" / "europe" / "generation")
-    p.add_argument("--weather_dir", type=Path, default=root / "data" / "raw" / "weather_enriched")
-    p.add_argument("--output_dir", type=Path, default=root / "data" / "processed_renewables_daily")
+    p.add_argument("--weather_dir", type=Path, default=root / "data" / "raw" / "weather")
+    p.add_argument("--output_dir", type=Path, default=root / "data" / "processed_renewables_hourly")
     p.add_argument("--include_external", action="store_true")
     return p.parse_args()
 
 
-def load_enriched_weather(weather_dir: Path) -> pd.DataFrame:
+def load_hourly_weather(weather_dir: Path) -> pd.DataFrame:
     parts = []
-    for path in sorted(weather_dir.glob("weather_daily_*.csv")):
+    for path in sorted(weather_dir.glob("weather_*.csv")):
         code = path.stem.split("_")[-1]
         df = pd.read_csv(path)
-        df["date"] = pd.to_datetime(df["date"])
+        df["utc_timestamp"] = pd.to_datetime(df["utc_timestamp"], utc=True)
         df["country_code"] = code
-        missing = [col for col in DAILY_EXTERNAL_COLUMNS if col not in df.columns]
+        missing = [col for col in HOURLY_EXTERNAL_COLUMNS if col not in df.columns]
         if missing:
             raise ValueError(f"{path} is missing weather columns: {missing}")
-        parts.append(df[["date", "country_code", *DAILY_EXTERNAL_COLUMNS]])
+        parts.append(df[["utc_timestamp", "country_code", *HOURLY_EXTERNAL_COLUMNS]])
     if not parts:
-        raise FileNotFoundError(f"No weather_daily_*.csv files found in {weather_dir}")
+        raise FileNotFoundError(f"No weather_*.csv files found in {weather_dir}")
     return pd.concat(parts, ignore_index=True)
 
 
-def attach_target_day_weather(df: pd.DataFrame, weather_dir: Path) -> pd.DataFrame:
-    weather = load_enriched_weather(weather_dir)
+def attach_target_hour_weather(df: pd.DataFrame, weather_dir: Path) -> pd.DataFrame:
+    weather = load_hourly_weather(weather_dir)
     out = df.copy()
-    out["weather_date"] = pd.to_datetime(out["date"]) + pd.Timedelta(days=1)
+    out["weather_timestamp"] = pd.to_datetime(out["utc_timestamp"], utc=True) + pd.Timedelta(hours=1)
     out = out.merge(
-        weather.rename(columns={"date": "weather_date"}),
-        on=["country_code", "weather_date"],
+        weather.rename(columns={"utc_timestamp": "weather_timestamp"}),
+        on=["country_code", "weather_timestamp"],
         how="left",
     )
-    return out.drop(columns=["weather_date"])
+    return out.drop(columns=["weather_timestamp"])
+
+
+# Backward-compatible alias while the repo moves from D+1 to H+1.
+attach_target_day_weather = attach_target_hour_weather
 
 
 def build_dataset(
@@ -68,14 +71,14 @@ def build_dataset(
     weather_dir: Path | None = None,
     include_external: bool = False,
 ) -> pd.DataFrame:
-    df = load_all_generation_daily(generation_dir)
+    df = load_all_generation_hourly(generation_dir)
     df = add_calendar_features(df)
     df = add_lag_features(df)
-    df = add_day_ahead_targets(df)
+    df = add_hour_ahead_targets(df)
     if include_external:
         if weather_dir is None:
             raise ValueError("weather_dir is required when include_external=True")
-        df = attach_target_day_weather(df, weather_dir)
+        df = attach_target_hour_weather(df, weather_dir)
     df = add_country_dummies(df)
 
     required = [
@@ -86,10 +89,10 @@ def build_dataset(
             include_country_id=True,
         ),
         *target_columns(),
-        "target_date",
+        "target_timestamp",
     ]
     df = df.dropna(subset=required).reset_index(drop=True)
-    return df.sort_values(["country_code", "date"]).reset_index(drop=True)
+    return df.sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
 
 
 def main() -> None:
@@ -101,11 +104,11 @@ def main() -> None:
         include_external=args.include_external,
     )
     print(f"Built renewables dataset: shape={df.shape}")
-    print(f"Date range: {df['date'].min()} -> {df['date'].max()}")
-    print(f"Target date range: {df['target_date'].min()} -> {df['target_date'].max()}")
+    print(f"Timestamp range: {df['utc_timestamp'].min()} -> {df['utc_timestamp'].max()}")
+    print(f"Target timestamp range: {df['target_timestamp'].min()} -> {df['target_timestamp'].max()}")
     print(f"Countries: {sorted(df['country_code'].unique().tolist())}")
 
-    splits = split_by_target_date(df)
+    splits = split_by_target_timestamp(df)
     for name, split_df in splits.items():
         path = args.output_dir / f"{name}.parquet"
         split_df.to_parquet(path, index=False)

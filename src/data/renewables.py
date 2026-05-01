@@ -1,4 +1,4 @@
-"""Shared helpers for the daily renewables forecasting dataset."""
+"""Shared helpers for the hourly renewables forecasting dataset."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,9 +9,11 @@ import pandas as pd
 from src.data.preprocess import (
     ALL_CODES,
     COUNTRY_TIMEZONES,
+    WEATHER_FEATURES,
     TARGET_CODE,
     TRAIN_END,
     TRAIN_START,
+    TEST_START,
     VAL_END,
     VAL_START,
     role_for_code,
@@ -23,7 +25,6 @@ RENEWABLE_TARGET_COLS = [
     "wind_mwh",
     "hydro_mwh",
     "renewable_total_mwh",
-    "renewable_share",
 ]
 
 RENEWABLE_COMPONENT_COLS = [
@@ -50,8 +51,8 @@ RENEWABLE_TECH_PREFIXES = {
     "other_renewable_mwh": ("Other renewable",),
 }
 
-DEFAULT_RENEWABLE_LAGS = [1, 2, 7, 14, 30]
-DEFAULT_RENEWABLE_ROLL_WINDOWS = [7, 14, 30]
+DEFAULT_RENEWABLE_LAGS = [1, 2, 24, 48, 168]
+DEFAULT_RENEWABLE_ROLL_WINDOWS = [24, 168]
 
 DAILY_EXTERNAL_COLUMNS = [
     "temperature_2m_mean",
@@ -66,6 +67,8 @@ DAILY_EXTERNAL_COLUMNS = [
     "wind_speed_100m_max",
     "wind_gusts_10m_max",
 ]
+
+HOURLY_EXTERNAL_COLUMNS = list(WEATHER_FEATURES)
 
 
 def target_columns() -> list[str]:
@@ -85,11 +88,15 @@ def lag_feature_columns(df: pd.DataFrame) -> list[str]:
 
 
 def temporal_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in ["dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend"] if c in df.columns]
+    return [
+        c
+        for c in ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend"]
+        if c in df.columns
+    ]
 
 
 def external_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in DAILY_EXTERNAL_COLUMNS if c in df.columns]
+    return [c for c in HOURLY_EXTERNAL_COLUMNS if c in df.columns]
 
 
 def country_id_columns(df: pd.DataFrame) -> list[str]:
@@ -162,7 +169,7 @@ def load_generation_csv(path: Path) -> pd.DataFrame:
     return df.sort_values("utc_timestamp").reset_index(drop=True)
 
 
-def aggregate_country_generation_daily(df: pd.DataFrame, country_code: str) -> pd.DataFrame:
+def aggregate_country_generation_hourly(df: pd.DataFrame, country_code: str) -> pd.DataFrame:
     df = df.copy().sort_values("utc_timestamp").reset_index(drop=True)
     duration_h = infer_interval_hours(df["utc_timestamp"])
     generation_cols = [c for c in df.columns if is_generation_column(c)]
@@ -178,35 +185,39 @@ def aggregate_country_generation_daily(df: pd.DataFrame, country_code: str) -> p
     total_cols = [c for c in generation_cols if is_generation_column(c)]
     out["total_generation_mwh"] = energy[total_cols].sum(axis=1) if total_cols else 0.0
 
-    local_tz = COUNTRY_TIMEZONES[country_code]
-    out["date"] = out["utc_timestamp"].dt.tz_convert(local_tz).dt.date
-    daily = out.drop(columns=["utc_timestamp"]).groupby("date", as_index=False).sum(numeric_only=True)
-    daily["date"] = pd.to_datetime(daily["date"])
-    daily["country_code"] = country_code
-    daily["role"] = role_for_code(country_code)
+    out["utc_timestamp"] = out["utc_timestamp"].dt.floor("h")
+    hourly = out.groupby("utc_timestamp", as_index=False).sum(numeric_only=True)
+    hourly["country_code"] = country_code
+    hourly["role"] = role_for_code(country_code)
 
-    daily["wind_mwh"] = daily["wind_onshore_mwh"] + daily["wind_offshore_mwh"]
-    daily["hydro_mwh"] = daily["hydro_run_of_river_mwh"] + daily["hydro_reservoir_mwh"]
-    daily["renewable_total_mwh"] = daily[RENEWABLE_COMPONENT_COLS].sum(axis=1)
-    daily["renewable_share"] = np.where(
-        daily["total_generation_mwh"] > 0,
-        daily["renewable_total_mwh"] / daily["total_generation_mwh"],
+    hourly["wind_mwh"] = hourly["wind_onshore_mwh"] + hourly["wind_offshore_mwh"]
+    hourly["hydro_mwh"] = hourly["hydro_run_of_river_mwh"] + hourly["hydro_reservoir_mwh"]
+    hourly["renewable_total_mwh"] = hourly[RENEWABLE_COMPONENT_COLS].sum(axis=1)
+    hourly["renewable_share"] = np.where(
+        hourly["total_generation_mwh"] > 0,
+        hourly["renewable_total_mwh"] / hourly["total_generation_mwh"],
         np.nan,
     )
-    return daily.sort_values("date").reset_index(drop=True)
+    return hourly.sort_values("utc_timestamp").reset_index(drop=True)
 
 
 def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    date = pd.to_datetime(df["date"])
-    dow = date.dt.dayofweek
-    month = date.dt.month - 1
-    df["dow_sin"] = np.sin(2 * np.pi * dow / 7).astype(np.float32)
-    df["dow_cos"] = np.cos(2 * np.pi * dow / 7).astype(np.float32)
-    df["month_sin"] = np.sin(2 * np.pi * month / 12).astype(np.float32)
-    df["month_cos"] = np.cos(2 * np.pi * month / 12).astype(np.float32)
-    df["is_weekend"] = (dow >= 5).astype(np.int8)
-    return df
+    parts: list[pd.DataFrame] = []
+    for country_code, group in df.groupby("country_code", sort=False):
+        frame = group.copy()
+        local_ts = pd.to_datetime(frame["utc_timestamp"], utc=True).dt.tz_convert(COUNTRY_TIMEZONES[country_code])
+        hour = local_ts.dt.hour
+        dow = local_ts.dt.dayofweek
+        month = local_ts.dt.month - 1
+        frame["hour_sin"] = np.sin(2 * np.pi * hour / 24).astype(np.float32)
+        frame["hour_cos"] = np.cos(2 * np.pi * hour / 24).astype(np.float32)
+        frame["dow_sin"] = np.sin(2 * np.pi * dow / 7).astype(np.float32)
+        frame["dow_cos"] = np.cos(2 * np.pi * dow / 7).astype(np.float32)
+        frame["month_sin"] = np.sin(2 * np.pi * month / 12).astype(np.float32)
+        frame["month_cos"] = np.cos(2 * np.pi * month / 12).astype(np.float32)
+        frame["is_weekend"] = (dow >= 5).astype(np.int8)
+        parts.append(frame)
+    return pd.concat(parts, ignore_index=True).sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
 
 
 def add_lag_features(
@@ -217,7 +228,7 @@ def add_lag_features(
 ) -> pd.DataFrame:
     lags = lags or DEFAULT_RENEWABLE_LAGS
     roll_windows = roll_windows or DEFAULT_RENEWABLE_ROLL_WINDOWS
-    df = df.copy().sort_values(["country_code", "date"]).reset_index(drop=True)
+    df = df.copy().sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
     grouped = df.groupby("country_code", group_keys=False)
     for target in RENEWABLE_TARGET_COLS:
         for lag in lags:
@@ -228,12 +239,12 @@ def add_lag_features(
     return df
 
 
-def add_day_ahead_targets(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy().sort_values(["country_code", "date"]).reset_index(drop=True)
+def add_hour_ahead_targets(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy().sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
     grouped = df.groupby("country_code", group_keys=False)
     for target in RENEWABLE_TARGET_COLS:
         df[f"y_{target}"] = grouped[target].shift(-1)
-    df["target_date"] = grouped["date"].shift(-1)
+    df["target_timestamp"] = grouped["utc_timestamp"].shift(-1)
     return df
 
 
@@ -243,21 +254,27 @@ def add_country_dummies(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df, dummies], axis=1)
 
 
-def split_by_target_date(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    target_date = pd.to_datetime(df["target_date"], utc=True)
+def split_by_target_timestamp(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    target_timestamp = pd.to_datetime(df["target_timestamp"], utc=True)
     return {
-        "train": df.loc[(target_date >= TRAIN_START) & (target_date <= TRAIN_END)].copy(),
-        "val": df.loc[(target_date >= VAL_START) & (target_date <= VAL_END)].copy(),
-        "test": df.loc[target_date >= pd.Timestamp("2024-01-01", tz="UTC")].copy(),
+        "train": df.loc[(target_timestamp >= TRAIN_START) & (target_timestamp <= TRAIN_END)].copy(),
+        "val": df.loc[(target_timestamp >= VAL_START) & (target_timestamp <= VAL_END)].copy(),
+        "test": df.loc[target_timestamp >= TEST_START].copy(),
     }
 
 
-def load_all_generation_daily(generation_dir: Path) -> pd.DataFrame:
+def load_all_generation_hourly(generation_dir: Path) -> pd.DataFrame:
     parts = []
     for code in ALL_CODES:
         path = generation_dir / f"entsoe_generation_{code}.csv"
         if not path.exists():
             raise FileNotFoundError(path)
-        parts.append(aggregate_country_generation_daily(load_generation_csv(path), code))
-    return pd.concat(parts, ignore_index=True).sort_values(["country_code", "date"]).reset_index(drop=True)
+        parts.append(aggregate_country_generation_hourly(load_generation_csv(path), code))
+    return pd.concat(parts, ignore_index=True).sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
 
+
+# Backward-compatible aliases while the repo finishes moving from D+1 to H+1.
+aggregate_country_generation_daily = aggregate_country_generation_hourly
+add_day_ahead_targets = add_hour_ahead_targets
+split_by_target_date = split_by_target_timestamp
+load_all_generation_daily = load_all_generation_hourly

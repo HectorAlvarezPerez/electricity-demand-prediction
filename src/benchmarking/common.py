@@ -61,6 +61,98 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     return {"mae": mae, "rmse": rmse, "mape": mape}
 
 
+def bootstrap_mae_ci(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    *,
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 12345,
+) -> dict[str, float]:
+    """Estimate a row-resampled bootstrap confidence interval for MAE."""
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+    if y_true.shape != y_pred.shape:
+        raise ValueError(f"y_true and y_pred must have the same shape, got {y_true.shape} and {y_pred.shape}")
+    if y_true.ndim == 0:
+        raise ValueError("Expected at least one sample")
+    if y_true.ndim == 1:
+        y_true = y_true.reshape(-1, 1)
+        y_pred = y_pred.reshape(-1, 1)
+    if y_true.shape[0] == 0:
+        raise ValueError("Cannot bootstrap MAE with an empty sample")
+    if n_bootstrap <= 0:
+        raise ValueError(f"n_bootstrap must be positive, got {n_bootstrap}")
+    if not 0 < confidence < 1:
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+
+    observed = float(np.mean(np.abs(y_true - y_pred)))
+    rng = np.random.default_rng(seed)
+    n_samples = y_true.shape[0]
+    boot = np.empty(n_bootstrap, dtype=np.float64)
+    for i in range(n_bootstrap):
+        idx = rng.integers(0, n_samples, size=n_samples)
+        boot[i] = np.mean(np.abs(y_true[idx] - y_pred[idx]))
+
+    alpha = 1.0 - confidence
+    ci_low, ci_high = np.quantile(boot, [alpha / 2.0, 1.0 - alpha / 2.0])
+    return {
+        "mae": observed,
+        "ci_low": float(ci_low),
+        "ci_high": float(ci_high),
+        "confidence": float(confidence),
+        "n_bootstrap": float(n_bootstrap),
+        "n_samples": float(n_samples),
+    }
+
+
+def aggregate_numeric_by_group(
+    rows: list[dict[str, Any]],
+    *,
+    group_keys: list[str],
+    metric_keys: list[str],
+) -> list[dict[str, Any]]:
+    """Aggregate numeric metrics as mean/std/n for each group."""
+    if not rows:
+        return []
+
+    df = pd.DataFrame(rows)
+    missing = [key for key in [*group_keys, *metric_keys] if key not in df.columns]
+    if missing:
+        raise KeyError(f"Missing columns for aggregation: {missing}")
+
+    result: list[dict[str, Any]] = []
+    grouped = df.groupby(group_keys, dropna=False, sort=False)
+    for keys, group in grouped:
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        out = {key: value for key, value in zip(group_keys, keys)}
+        out["n_seeds"] = int(group["seed"].nunique()) if "seed" in group.columns else int(len(group))
+        for metric_key in metric_keys:
+            values = pd.to_numeric(group[metric_key], errors="coerce").dropna()
+            out[f"{metric_key}_mean"] = float(values.mean()) if len(values) else float("nan")
+            out[f"{metric_key}_std"] = float(values.std(ddof=1)) if len(values) > 1 else 0.0
+        result.append(out)
+    return result
+
+
+def compute_metrics_with_denormalized_targets(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    *,
+    target_params: dict,
+    target_cols: list[str],
+) -> dict[str, dict[str, float]]:
+    y_true = np.asarray(y_true, dtype=np.float32)
+    y_pred = np.asarray(y_pred, dtype=np.float32)
+    y_true_mw = denormalize_targets(y_true, target_params, target_cols)
+    y_pred_mw = denormalize_targets(y_pred, target_params, target_cols)
+    return {
+        "norm": compute_metrics(y_true, y_pred),
+        "raw": compute_metrics(y_true_mw, y_pred_mw),
+    }
+
+
 def _as_horizon_array(values: Any, target_cols: list[str] | None = None) -> np.ndarray:
     if hasattr(values, "reindex") and target_cols is not None:
         values = values.reindex(target_cols)

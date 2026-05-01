@@ -22,6 +22,7 @@ from src.benchmarking.common import (
     build_conformal_interval_report,
     build_prediction_interval_frame,
     compute_metrics,
+    compute_metrics_with_denormalized_targets,
     current_rss_mb,
     model_size_mb,
     parameter_count,
@@ -162,6 +163,21 @@ def main() -> None:
             "target_test": (y_target_test, predictions["target_test"]),
         }.items()
     }
+    metrics_raw = {
+        split_name: compute_metrics_with_denormalized_targets(
+            y_true,
+            y_pred,
+            target_params=target_params,
+            target_cols=y_cols,
+        )["raw"]
+        for split_name, (y_true, y_pred) in {
+            "source_train": (y_train, predictions["source_train"]),
+            "source_val": (y_source_val, predictions["source_val"]),
+            "source_test": (y_source_test, predictions["source_test"]),
+            "target_val": (y_target_val, predictions["target_val"]),
+            "target_test": (y_target_test, predictions["target_test"]),
+        }.items()
+    }
 
     prediction_intervals = build_conformal_interval_report(
         calibrations={
@@ -253,6 +269,7 @@ def main() -> None:
     )
 
     payload = output.to_dict()
+    payload["fit_metrics_raw"] = metrics_raw
     payload["prediction_intervals"] = prediction_intervals
     save_json(args.output, payload)
     print(f"[XGBoost] Saved -> {args.output}", flush=True)
