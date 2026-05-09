@@ -15,31 +15,31 @@ MODEL_COLORS = {
     "Ridge": "#8E79A8",
     "Ridge h=24": "#8E79A8",
     "Ridge Regression": "#8E79A8",
-    "Daily Naive": "#8A8A8A",
-    "Naive diari": "#8A8A8A",
+    "Daily Naive": "#D8D4C8",
+    "Naive diari": "#D8D4C8",
 }
 
 SERIES_COLORS = {
-    "Demanda real": "#3A3A3A",
-    "ENTSO-E dia anterior": "#D89C45",
+    "Demanda real": "#A7B2BA",
+    "ENTSO-E dia anterior": "#F2D49B",
     "MAE": "#4E79A7",
     "RMSE": "#C46A5A",
     "Validació font": "#4E79A7",
-    "Validació objectiu": "#D89C45",
+    "Validació objectiu": "#F2D49B",
 }
 
 CONDITION_COLORS = {
-    "demand_only": "#8A8A8A",
-    "without_features": "#8A8A8A",
+    "demand_only": "#D8D4C8",
+    "without_features": "#D8D4C8",
     "temporal_only": "#4E79A7",
     "with_features": "#4E79A7",
     "weather_only": "#59A14F",
-    "all_features": "#D89C45",
+    "all_features": "#F2D49B",
 }
 
 METRIC_COLORS = {
     "target_test_mae": "#4E79A7",
-    "train_time_s": "#D89C45",
+    "train_time_s": "#F2D49B",
     "peak_rss_mb": "#59A14F",
     "target_inf_mean_ms": "#C46A5A",
 }
@@ -47,9 +47,9 @@ METRIC_COLORS = {
 FEATURE_FAMILY_COLORS = {
     "demand": "#4E79A7",
     "calendar": "#59A14F",
-    "weather": "#D89C45",
+    "weather": "#F2D49B",
     "country": "#8E79A8",
-    "other": "#8A8A8A",
+    "other": "#D8D4C8",
 }
 
 
