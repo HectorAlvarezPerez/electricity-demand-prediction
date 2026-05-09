@@ -7,49 +7,49 @@ import matplotlib.pyplot as plt
 
 
 MODEL_COLORS = {
-    "XGBoost": "#1f78b4",
-    "MLP": "#33a02c",
-    "MLP (Tabular)": "#33a02c",
-    "GraphSAGE": "#e31a1c",
-    "GraphSAGE (Grafs)": "#e31a1c",
-    "Ridge": "#6a3d9a",
-    "Ridge h=24": "#6a3d9a",
-    "Ridge Regression": "#6a3d9a",
-    "Daily Naive": "#7f7f7f",
-    "Naive diari": "#7f7f7f",
+    "XGBoost": "#4E79A7",
+    "MLP": "#59A14F",
+    "MLP (Tabular)": "#59A14F",
+    "GraphSAGE": "#C46A5A",
+    "GraphSAGE (Grafs)": "#C46A5A",
+    "Ridge": "#8E79A8",
+    "Ridge h=24": "#8E79A8",
+    "Ridge Regression": "#8E79A8",
+    "Daily Naive": "#8A8A8A",
+    "Naive diari": "#8A8A8A",
 }
 
 SERIES_COLORS = {
-    "Demanda real": "#222222",
-    "ENTSO-E dia anterior": "#ff7f00",
-    "MAE": "#1f78b4",
-    "RMSE": "#e31a1c",
-    "Validació font": "#1f78b4",
-    "Validació objectiu": "#ff7f00",
+    "Demanda real": "#3A3A3A",
+    "ENTSO-E dia anterior": "#D89C45",
+    "MAE": "#4E79A7",
+    "RMSE": "#C46A5A",
+    "Validació font": "#4E79A7",
+    "Validació objectiu": "#D89C45",
 }
 
 CONDITION_COLORS = {
-    "demand_only": "#7f7f7f",
-    "without_features": "#7f7f7f",
-    "temporal_only": "#1f78b4",
-    "with_features": "#1f78b4",
-    "weather_only": "#33a02c",
-    "all_features": "#ff7f00",
+    "demand_only": "#8A8A8A",
+    "without_features": "#8A8A8A",
+    "temporal_only": "#4E79A7",
+    "with_features": "#4E79A7",
+    "weather_only": "#59A14F",
+    "all_features": "#D89C45",
 }
 
 METRIC_COLORS = {
-    "target_test_mae": "#1f78b4",
-    "train_time_s": "#ff7f00",
-    "peak_rss_mb": "#33a02c",
-    "target_inf_mean_ms": "#e31a1c",
+    "target_test_mae": "#4E79A7",
+    "train_time_s": "#D89C45",
+    "peak_rss_mb": "#59A14F",
+    "target_inf_mean_ms": "#C46A5A",
 }
 
 FEATURE_FAMILY_COLORS = {
-    "demand": "#1f78b4",
-    "calendar": "#33a02c",
-    "weather": "#ff7f00",
-    "country": "#6a3d9a",
-    "other": "#7f7f7f",
+    "demand": "#4E79A7",
+    "calendar": "#59A14F",
+    "weather": "#D89C45",
+    "country": "#8E79A8",
+    "other": "#8A8A8A",
 }
 
 
@@ -72,10 +72,12 @@ def color_for_metric(key: str) -> str:
 
 
 def apply_report_bar_style(ax, *, grid_alpha: float = 0.25) -> None:
-    ax.grid(axis="y", alpha=grid_alpha)
+    ax.grid(axis="y", alpha=grid_alpha, color="#D7D7D7", linewidth=0.8)
     ax.set_axisbelow(True)
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
+    for spine in ("left", "bottom"):
+        ax.spines[spine].set_color("#B8B8B8")
 
 
 def annotate_vertical_bars(
