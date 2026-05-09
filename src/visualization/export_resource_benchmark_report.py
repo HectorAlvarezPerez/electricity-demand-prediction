@@ -14,6 +14,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.paths import FIGURES_DIR, METRICS_DIR, ensure_artifact_dirs
+from src.visualization.plot_style import (
+    annotate_vertical_bars,
+    apply_report_bar_style,
+    color_for_metric,
+    color_for_series,
+)
 
 
 MAIN_REPORT_TEX = ROOT / "artifacts" / "reports" / "document_general_resultats_i_desenvolupament.tex"
@@ -176,23 +182,21 @@ def write_figure(rows: list[dict]) -> None:
 
     fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.2), constrained_layout=True)
     metrics = [
-        ("target_test_mae", "MAE objectiu", "#1f77b4"),
-        ("train_time_s", "Temps d'entrenament (s)", "#d62728"),
-        ("peak_rss_mb", "Pic RSS (MB)", "#2ca02c"),
-        ("target_inf_mean_ms", "Inferència mitjana (ms)", "#ff7f0e"),
+        ("target_test_mae", "MAE objectiu"),
+        ("train_time_s", "Temps d'entrenament (s)"),
+        ("peak_rss_mb", "Pic RSS (MB)"),
+        ("target_inf_mean_ms", "Inferència mitjana (ms)"),
     ]
 
-    for ax, (key, title, color) in zip(axes.flat, metrics):
+    for ax, (key, title) in zip(axes.flat, metrics):
         vals = [r[key] for r in rows]
-        bars = ax.bar(x, vals, color=color, width=0.6)
+        bars = ax.bar(x, vals, color=color_for_metric(key), width=0.6)
         ax.set_xticks(x, labels)
         ax.set_title(title)
-        ax.grid(axis="y", alpha=0.25)
-        ax.set_axisbelow(True)
+        apply_report_bar_style(ax)
         if key in {"train_time_s", "peak_rss_mb"}:
             ax.set_yscale("log")
-        for bar, val in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), _fmt(val, 2), ha="center", va="bottom", fontsize=8)
+        annotate_vertical_bars(ax, bars, fmt="{:.2f}", fontsize=8)
 
     fig.suptitle("Comparativa unificada de recursos", fontsize=14, weight="bold")
     fig.savefig(OUT_FIG, dpi=300, bbox_inches="tight")
@@ -210,22 +214,22 @@ def write_interval_figure(rows: list[dict]) -> None:
     width_source = [r["source_calib_mean_width_mw"] for r in rows]
     width_target = [r["target_calib_mean_width_mw"] for r in rows]
 
-    axes[0].bar(x - width / 2, coverage_source, width, label="Validació font", color="#1f77b4")
-    axes[0].bar(x + width / 2, coverage_target, width, label="Validació objectiu", color="#ff7f0e")
+    axes[0].bar(x - width / 2, coverage_source, width, label="Validació font", color=color_for_series("Validació font"))
+    axes[0].bar(x + width / 2, coverage_target, width, label="Validació objectiu", color=color_for_series("Validació objectiu"))
     axes[0].axhline(95.0, color="#333333", linestyle="--", linewidth=1.0, label="Cobertura nominal 95%")
     axes[0].set_xticks(x, labels)
     axes[0].set_ylim(0, max(100.0, np.nanmax(coverage_source + coverage_target) * 1.08))
     axes[0].set_ylabel("Cobertura empírica (%)")
     axes[0].set_title("Cobertura sobre la prova objectiu")
-    axes[0].grid(axis="y", alpha=0.25)
+    apply_report_bar_style(axes[0])
     axes[0].legend(fontsize=8)
 
-    axes[1].bar(x - width / 2, width_source, width, label="Validació font", color="#1f77b4")
-    axes[1].bar(x + width / 2, width_target, width, label="Validació objectiu", color="#ff7f0e")
+    axes[1].bar(x - width / 2, width_source, width, label="Validació font", color=color_for_series("Validació font"))
+    axes[1].bar(x + width / 2, width_target, width, label="Validació objectiu", color=color_for_series("Validació objectiu"))
     axes[1].set_xticks(x, labels)
     axes[1].set_ylabel("Amplada mitjana (MW)")
     axes[1].set_title("Amplada dels intervals 95%")
-    axes[1].grid(axis="y", alpha=0.25)
+    apply_report_bar_style(axes[1])
     axes[1].legend(fontsize=8)
 
     fig.suptitle("Intervals conformals sobre la prova objectiu", fontsize=13, weight="bold")

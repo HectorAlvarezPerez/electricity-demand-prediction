@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns
 from src.paths import FIGURES_DIR, MODELS_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_artifact_dirs
+from src.visualization.plot_style import apply_report_bar_style, color_for_model, color_for_series
 
 DATA_DIR = PROCESSED_DATA_DIR
 FORECAST_DIR = RAW_DATA_DIR / "europe" / "forecast"
@@ -156,16 +157,16 @@ def main() -> None:
     width = 0.2
 
     fig, ax = plt.subplots(figsize=(13, 5.8))
-    ax.bar(x - 1.5 * width, actual_vals, width=width, color="#222222", label="Demanda real")
-    ax.bar(x - 0.5 * width, entsoe_vals, width=width, color="#1b9e77", label="ENTSO-E dia anterior")
-    ax.bar(x + 0.5 * width, ridge_vals, width=width, color="#7570b3", label="Ridge h=24")
-    ax.bar(x + 1.5 * width, xgb_vals, width=width, color="#1f78b4", label="XGBoost h=24")
+    ax.bar(x - 1.5 * width, actual_vals, width=width, color=color_for_series("Demanda real"), label="Demanda real")
+    ax.bar(x - 0.5 * width, entsoe_vals, width=width, color=color_for_series("ENTSO-E dia anterior"), label="ENTSO-E dia anterior")
+    ax.bar(x + 0.5 * width, ridge_vals, width=width, color=color_for_model("Ridge h=24"), label="Ridge h=24")
+    ax.bar(x + 1.5 * width, xgb_vals, width=width, color=color_for_model("XGBoost"), label="XGBoost h=24")
 
     ax.set_ylabel("Demanda mitjana (MW)", fontsize=12)
     ax.set_title("Comparativa de previsió del dia anterior de demanda mitjana per país", fontsize=14)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=10)
-    ax.grid(axis="y", alpha=0.2)
+    apply_report_bar_style(ax, grid_alpha=0.2)
     ax.legend(fontsize=10, ncol=2)
     fig.tight_layout()
 

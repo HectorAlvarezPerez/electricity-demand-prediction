@@ -15,6 +15,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.paths import FIGURES_DIR, MODELS_DIR, ensure_artifact_dirs
+from src.visualization.plot_style import (
+    FEATURE_FAMILY_COLORS,
+    annotate_vertical_bars,
+    apply_report_bar_style,
+    rotate_xticks,
+)
 
 MODEL_PATH = MODELS_DIR / "baseline_xgb.json"
 MODEL_META_PATH = MODELS_DIR / "baseline_xgb_features.json"
@@ -90,26 +96,21 @@ def main() -> None:
     }
     nice_names = [label_map.get(name, name) for name in names]
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(11, 5.8))
     colors = [
-        "#2c7fb8" if name == "demand"
-        else "#41ae76" if name in {"hour", "dow", "month", "weekend"}
-        else "#fd8d3c" if "temp" in name
-        else "#756bb1"
+        FEATURE_FAMILY_COLORS["demand"] if name == "demand"
+        else FEATURE_FAMILY_COLORS["calendar"] if name in {"hour", "dow", "month", "weekend"}
+        else FEATURE_FAMILY_COLORS["weather"] if "temp" in name
+        else FEATURE_FAMILY_COLORS["country"] if name == "country_id"
+        else FEATURE_FAMILY_COLORS["other"]
         for name in names
     ]
-    bars = ax.barh(nice_names[::-1], values[::-1], color=colors[::-1])
-    ax.set_xlabel("Importància acumulada", fontsize=12)
+    bars = ax.bar(nice_names, values, color=colors)
+    ax.set_ylabel("Importància acumulada", fontsize=12)
     ax.set_title("Importància de features — XGBoost long-format", fontsize=14)
-
-    for bar, val in zip(bars, values[::-1]):
-        ax.text(
-            bar.get_width() + 0.002,
-            bar.get_y() + bar.get_height() / 2,
-            f"{val:.3f}",
-            va="center",
-            fontsize=10,
-        )
+    apply_report_bar_style(ax)
+    rotate_xticks(ax, rotation=30, fontsize=9)
+    annotate_vertical_bars(ax, bars, fmt="{:.3f}", fontsize=9)
 
     fig.tight_layout()
     out = FIGURES_DIR / "xgb_feature_importance.png"

@@ -22,6 +22,12 @@ if str(ROOT) not in sys.path:
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns
 from src.paths import FIGURES_DIR, METRICS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
+from src.visualization.plot_style import (
+    annotate_vertical_bars,
+    apply_report_bar_style,
+    color_for_condition,
+    color_for_model,
+)
 
 TARGET_CODE = "ES"
 SOURCE_CODES = ["BE", "DE", "FR", "GR", "IT", "NL", "PT"]
@@ -176,30 +182,22 @@ def plot_target_ablation(all_results):
     mae_with = [all_results["with_features"][m]["target_es"]["mae"] for m in models]
     mae_without = [all_results["without_features"][m]["target_es"]["mae"] for m in models]
 
-    y = np.arange(len(models))
-    h = 0.3
+    x = np.arange(len(models))
+    width = 0.3
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    b1 = ax.barh(y + h / 2, mae_with, h, label="Amb temporals", color="#2c7fb8")
-    b2 = ax.barh(y - h / 2, mae_without, h, label="Només demanda", color="#fc8d59")
+    fig, ax = plt.subplots(figsize=(8, 5))
+    b1 = ax.bar(x - width / 2, mae_with, width, label="Amb temporals", color=color_for_condition("with_features"))
+    b2 = ax.bar(x + width / 2, mae_without, width, label="Només demanda", color=color_for_condition("without_features"))
 
     for bars in (b1, b2):
-        for bar in bars:
-            ax.text(
-                bar.get_width() + 0.003,
-                bar.get_y() + bar.get_height() / 2,
-                f"{bar.get_width():.4f}",
-                va="center",
-                fontsize=11,
-                fontweight="bold",
-            )
+        annotate_vertical_bars(ax, bars, fmt="{:.4f}", padding=0.003, fontsize=10, fontweight="bold")
 
-    ax.set_yticks(y)
-    ax.set_yticklabels(models, fontsize=13)
-    ax.set_xlabel("MAE (Normalitzat) — Target Zero-Shot (ES)", fontsize=12)
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, fontsize=12)
+    ax.set_ylabel("MAE (Normalitzat) — Target Zero-Shot (ES)", fontsize=12)
     ax.set_title("Ablació: impacte de les covariables temporals", fontsize=14)
-    ax.legend(fontsize=11, loc="upper center", ncol=2, bbox_to_anchor=(0.5, -0.15))
-    ax.invert_yaxis()
+    ax.legend(fontsize=10, loc="upper center", ncol=2)
+    apply_report_bar_style(ax)
     fig.tight_layout()
 
     out = FIGURES_DIR / "ablation_target.png"
@@ -216,18 +214,18 @@ def plot_per_domain_ablation(all_results):
     fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
     for ax, (cond_key, cond_title) in zip(axes, conditions.items()):
         models = list(all_results[cond_key].keys())
-        colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
         x = np.arange(len(domains))
         w = 0.8 / len(models)
         for i, model in enumerate(models):
             vals = [all_results[cond_key][model][d]["mae"] for d in domains]
             offset = (i - len(models) / 2 + 0.5) * w
-            ax.bar(x + offset, vals, w, label=model, color=colors[i])
+            ax.bar(x + offset, vals, w, label=model, color=color_for_model(model))
         ax.set_title(cond_title, fontsize=13)
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=9, rotation=30, ha="right")
         ax.set_ylabel("MAE (Normalitzat)", fontsize=11)
         ax.legend(fontsize=9)
+        apply_report_bar_style(ax)
 
     fig.suptitle("MAE per país i model — ablation temporal", fontsize=14, y=1.02)
     fig.tight_layout()
@@ -246,22 +244,13 @@ def plot_improvement_pct(all_results):
         pct.append((mae_without - mae_with) / mae_without * 100)
 
     fig, ax = plt.subplots(figsize=(7, 5))
-    colors = ["#4c9f70" if p > 0 else "#c0392b" for p in pct]
+    colors = [color_for_condition("with_features") if p > 0 else "#e31a1c" for p in pct]
     bars = ax.bar(models, pct, color=colors)
-    for bar, value in zip(bars, pct):
-        ax.annotate(
-            f"{value:+.1f}%",
-            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
-            xytext=(0, 3),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=12,
-            fontweight="bold",
-        )
+    annotate_vertical_bars(ax, bars, fmt="{:+.1f}%", fontsize=11, fontweight="bold")
     ax.set_ylabel("Reducció MAE (%)", fontsize=12)
     ax.set_title("Millora percentual per afegir temporals", fontsize=13)
     ax.axhline(0, color="grey", linewidth=0.8)
+    apply_report_bar_style(ax)
     fig.tight_layout()
     out = FIGURES_DIR / "ablation_improvement.png"
     fig.savefig(out, dpi=300, bbox_inches="tight")

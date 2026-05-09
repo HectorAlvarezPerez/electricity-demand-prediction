@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns, weather_columns
 from src.paths import FIGURES_DIR, METRICS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
+from src.visualization.plot_style import annotate_vertical_bars, apply_report_bar_style, color_for_condition
 
 TARGET_CODE = "ES"
 SOURCE_CODES = ["BE", "DE", "FR", "GR", "IT", "NL", "PT"]
@@ -63,14 +64,6 @@ CONDITION_LABELS = {
     "weather_only": "Demanda + meteo",
     "all_features": "Demanda + temporals + meteo",
 }
-CONDITION_COLORS = {
-    "demand_only": "#fc8d59",
-    "temporal_only": "#2c7fb8",
-    "weather_only": "#756bb1",
-    "all_features": "#41ae76",
-}
-
-
 def load_split(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
@@ -198,35 +191,28 @@ def run_condition(train_df, val_df, test_df, mode: str):
 def plot_target_pair(all_results, left_cond: str, right_cond: str, out_name: str, title: str):
     models = ["XGBoost", "Ridge Regression"]
     conditions = [left_cond, right_cond]
-    y = np.arange(len(models))
-    h = 0.28
+    x = np.arange(len(models))
+    width = 0.3
 
-    fig, ax = plt.subplots(figsize=(10, 4))
+    fig, ax = plt.subplots(figsize=(8, 5))
     for i, cond in enumerate(conditions):
         vals = [all_results[cond][m]["target_es"]["mae"] for m in models]
-        offset = (i - 0.5) * h
-        bars = ax.barh(
-            y + offset,
+        offset = (i - 0.5) * width
+        bars = ax.bar(
+            x + offset,
             vals,
-            h,
+            width,
             label=CONDITION_LABELS[cond],
-            color=CONDITION_COLORS[cond],
+            color=color_for_condition(cond),
         )
-        for bar in bars:
-            ax.text(
-                bar.get_width() + 0.003,
-                bar.get_y() + bar.get_height() / 2,
-                f"{bar.get_width():.4f}",
-                va="center",
-                fontsize=10,
-            )
+        annotate_vertical_bars(ax, bars, fmt="{:.4f}", padding=0.003, fontsize=9)
 
-    ax.set_yticks(y)
-    ax.set_yticklabels(models, fontsize=13)
-    ax.set_xlabel("MAE (Normalitzat) — Target Zero-Shot (ES)", fontsize=12)
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, fontsize=12)
+    ax.set_ylabel("MAE (Normalitzat) — Target Zero-Shot (ES)", fontsize=12)
     ax.set_title(title, fontsize=14)
-    ax.legend(fontsize=10, loc="upper center", ncol=2, bbox_to_anchor=(0.5, -0.15))
-    ax.invert_yaxis()
+    ax.legend(fontsize=10, loc="upper center", ncol=2)
+    apply_report_bar_style(ax)
     fig.tight_layout()
 
     out = FIGURES_DIR / out_name
@@ -238,35 +224,28 @@ def plot_target_pair(all_results, left_cond: str, right_cond: str, out_name: str
 def plot_target_all(all_results):
     models = ["XGBoost", "Ridge Regression"]
     conditions = ["demand_only", "temporal_only", "weather_only", "all_features"]
-    y = np.arange(len(models))
-    h = 0.18
+    x = np.arange(len(models))
+    width = 0.18
 
-    fig, ax = plt.subplots(figsize=(11, 4.2))
+    fig, ax = plt.subplots(figsize=(9, 5.2))
     for i, cond in enumerate(conditions):
         vals = [all_results[cond][m]["target_es"]["mae"] for m in models]
-        offset = (i - 1.5) * h
-        bars = ax.barh(
-            y + offset,
+        offset = (i - 1.5) * width
+        bars = ax.bar(
+            x + offset,
             vals,
-            h,
+            width,
             label=CONDITION_LABELS[cond],
-            color=CONDITION_COLORS[cond],
+            color=color_for_condition(cond),
         )
-        for bar in bars:
-            ax.text(
-                bar.get_width() + 0.003,
-                bar.get_y() + bar.get_height() / 2,
-                f"{bar.get_width():.4f}",
-                va="center",
-                fontsize=9,
-            )
+        annotate_vertical_bars(ax, bars, fmt="{:.4f}", padding=0.003, fontsize=8)
 
-    ax.set_yticks(y)
-    ax.set_yticklabels(models, fontsize=13)
-    ax.set_xlabel("MAE (Normalitzat) — Target Zero-Shot (ES)", fontsize=12)
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, fontsize=12)
+    ax.set_ylabel("MAE (Normalitzat) — Target Zero-Shot (ES)", fontsize=12)
     ax.set_title("Comparativa global de variables exògenes", fontsize=14)
-    ax.legend(fontsize=9, loc="upper center", ncol=4, bbox_to_anchor=(0.5, -0.18))
-    ax.invert_yaxis()
+    ax.legend(fontsize=9, loc="upper center", ncol=2)
+    apply_report_bar_style(ax)
     fig.tight_layout()
 
     out = FIGURES_DIR / "ablation_weather_all_target.png"
@@ -288,12 +267,13 @@ def plot_per_domain_all(all_results):
         for i, cond in enumerate(conditions):
             vals = [all_results[cond][model][d]["mae"] for d in domains]
             offset = (i - 1.5) * w
-            ax.bar(x + offset, vals, w, label=CONDITION_LABELS[cond], color=CONDITION_COLORS[cond])
+            ax.bar(x + offset, vals, w, label=CONDITION_LABELS[cond], color=color_for_condition(cond))
         ax.set_title(model, fontsize=13)
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=9, rotation=30, ha="right")
         ax.set_ylabel("MAE (Normalitzat)", fontsize=11)
         ax.legend(fontsize=9)
+        apply_report_bar_style(ax)
 
     fig.suptitle("MAE per país segons conjunt de variables", fontsize=14, y=1.02)
     fig.tight_layout()

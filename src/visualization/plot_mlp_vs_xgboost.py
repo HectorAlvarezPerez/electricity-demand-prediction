@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 
 from src.data.preprocess import normalize_data
 from src.paths import FIGURES_DIR, METRICS_DIR, MLFLOW_DB, MODELS_DIR, PROCESSED_DATA_DIR, ensure_artifact_dirs
+from src.visualization.plot_style import annotate_vertical_bars, apply_report_bar_style, color_for_model
 
 BASELINE_RESULTS = METRICS_DIR / "baseline_metrics.json"
 XGB_MODEL = MODELS_DIR / "baseline_xgb.json"
@@ -173,8 +174,6 @@ def plot_comparison(mlp: dict, xgb: dict) -> None:
 
     x = np.arange(len(domains))
     width = 0.34
-    colors = {"XGBoost": "#1f77b4", "MLP": "#d62728"}
-
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.6), constrained_layout=True)
     for ax, metric_name, values in zip(axes, ["MAE normalitzat", "RMSE normalitzat"], [mae, rmse]):
         for idx, model_name in enumerate(model_order):
@@ -184,25 +183,15 @@ def plot_comparison(mlp: dict, xgb: dict) -> None:
                 values[model_name],
                 width=width,
                 label=model_name,
-                color=colors[model_name],
+                color=color_for_model(model_name),
                 alpha=0.9,
             )
-            for bar in bars:
-                height = bar.get_height()
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    height + 0.004,
-                    f"{height:.3f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=9,
-                )
+            annotate_vertical_bars(ax, bars, fmt="{:.3f}", padding=0.004, fontsize=9)
 
         ax.set_xticks(x, domains)
         ax.set_ylabel(metric_name)
         ax.set_title(metric_name)
-        ax.grid(axis="y", alpha=0.25)
-        ax.set_axisbelow(True)
+        apply_report_bar_style(ax)
 
     axes[0].legend(frameon=False, loc="upper left")
     fig.suptitle("Comparativa agregada entre XGBoost i MLP", fontsize=13)

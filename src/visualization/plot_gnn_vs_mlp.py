@@ -1,9 +1,15 @@
 import json
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.visualization.plot_style import apply_report_bar_style, color_for_model
+
 metrics_dir = ROOT / "artifacts" / "metrics"
 fig_dir = ROOT / "artifacts" / "figures"
 fig_dir.mkdir(parents=True, exist_ok=True)
@@ -34,16 +40,16 @@ if gnn_path.exists() and comp_path.exists():
     x = np.arange(2)
     width = 0.25
     
-    ax.bar(x - width, xgb_scores, width, label='XGBoost', color='forestgreen')
-    ax.bar(x, mlp_scores, width, label='MLP (Tabular)', color='steelblue')
-    ax.bar(x + width, gnn_scores, width, label='GraphSAGE (Grafs)', color='darkorange')
+    ax.bar(x - width, xgb_scores, width, label='XGBoost', color=color_for_model("XGBoost"))
+    ax.bar(x, mlp_scores, width, label='MLP (Tabular)', color=color_for_model("MLP"))
+    ax.bar(x + width, gnn_scores, width, label='GraphSAGE (Grafs)', color=color_for_model("GraphSAGE"))
     
     ax.set_ylabel('MAE Normalitzat')
     ax.set_title('Comparativa Rendiment Absolut baseline vs MLP vs GraphSAGE')
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.legend()
-    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    apply_report_bar_style(ax)
     
     for i, v in enumerate(xgb_scores):
         ax.text(i - width, v + 0.005, f'{v:.3f}', ha='center', va='bottom', fontsize=9)

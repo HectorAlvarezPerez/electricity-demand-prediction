@@ -13,6 +13,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.paths import FIGURES_DIR, METRICS_DIR, ensure_artifact_dirs
+from src.visualization.plot_style import (
+    annotate_vertical_bars,
+    apply_report_bar_style,
+    color_for_model,
+    color_for_series,
+)
 
 RESULTS_PATH = METRICS_DIR / "baseline_metrics.json"
 
@@ -43,8 +49,8 @@ def plot_target_comparison(results):
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    bars_mae = ax.bar(x - width / 2, mae, width, label="MAE", color="steelblue")
-    bars_rmse = ax.bar(x + width / 2, rmse, width, label="RMSE", color="darkorange")
+    bars_mae = ax.bar(x - width / 2, mae, width, label="MAE", color=color_for_series("MAE"))
+    bars_rmse = ax.bar(x + width / 2, rmse, width, label="RMSE", color=color_for_series("RMSE"))
 
     ax.set_ylabel("Error Normalitzat", fontsize=12)
     ax.set_title(
@@ -54,19 +60,10 @@ def plot_target_comparison(results):
     ax.set_xticks(x)
     ax.set_xticklabels(models, fontsize=12)
     ax.legend(fontsize=11)
+    apply_report_bar_style(ax)
 
     for bars in (bars_mae, bars_rmse):
-        for bar in bars:
-            h = bar.get_height()
-            ax.annotate(
-                f"{h:.4f}",
-                xy=(bar.get_x() + bar.get_width() / 2, h),
-                xytext=(0, 3),
-                textcoords="offset points",
-                ha="center",
-                va="bottom",
-                fontsize=10,
-            )
+        annotate_vertical_bars(ax, bars, fmt="{:.4f}", fontsize=10)
 
     fig.tight_layout()
     out = FIGURES_DIR / "baselines_comparison.png"
@@ -83,19 +80,19 @@ def plot_per_domain(results):
 
     x = np.arange(len(domains))
     width = 0.8 / len(models)
-    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
 
     fig, ax = plt.subplots(figsize=(12, 5))
     for i, model in enumerate(models):
         mae_vals = [results[model][d]["mae"] for d in domains]
         offset = (i - len(models) / 2 + 0.5) * width
-        ax.bar(x + offset, mae_vals, width, label=model, color=colors[i])
+        ax.bar(x + offset, mae_vals, width, label=model, color=color_for_model(model))
 
     ax.set_ylabel("MAE (Normalitzat)", fontsize=12)
     ax.set_title("MAE per País i Model Base", fontsize=14)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=10, rotation=25, ha="right")
     ax.legend(fontsize=10)
+    apply_report_bar_style(ax)
     fig.tight_layout()
 
     out = FIGURES_DIR / "baselines_per_domain.png"

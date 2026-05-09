@@ -1,9 +1,15 @@
 import json
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.visualization.plot_style import apply_report_bar_style, color_for_model
+
 metrics_dir = ROOT / "artifacts" / "metrics"
 fig_dir = ROOT / "artifacts" / "figures"
 fig_dir.mkdir(parents=True, exist_ok=True)
@@ -34,14 +40,15 @@ fig, ax = plt.subplots(figsize=(8, 5))
 x = np.arange(2)
 width = 0.35
 
-ax.bar(x - width/2, mlp_scores, width, label='MLP')
-ax.bar(x + width/2, gnn_scores, width, label='GraphSAGE')
+ax.bar(x - width/2, mlp_scores, width, label='MLP', color=color_for_model("MLP"))
+ax.bar(x + width/2, gnn_scores, width, label='GraphSAGE', color=color_for_model("GraphSAGE"))
 
 ax.set_ylabel('MAE (MW)')
 ax.set_title('Comparativa de Rendimiento Tabular MLP vs GraphSAGE')
 ax.set_xticks(x)
 ax.set_xticklabels(labels)
 ax.legend()
+apply_report_bar_style(ax)
 
 plt.tight_layout()
 fig.savefig(fig_dir / "graphsage_vs_mlp.png", dpi=300)
