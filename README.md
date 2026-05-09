@@ -33,7 +33,6 @@ Actualment hi ha implementat:
 Propers passos possibles:
 
 - afegir figures específiques del benchmark renovable,
-- automatitzar l'export de taules renovables al document de la mateixa manera que el benchmark de demanda,
 - estudiar fonts meteorològiques de forecast històric per substituir la proxy perfecta.
 
 Benchmark unificat de recursos per demanda:
@@ -64,14 +63,16 @@ cd artifacts/reports && pdflatex document_general_resultats_i_desenvolupament.te
 ├── notebooks/
 │   └── eda.ipynb
 ├── src/
+│   ├── benchmarking/
 │   ├── data/
 │   ├── models/
 │   ├── visualization/
-│   ├── train.py
-│   ├── train_finetune.py
-│   ├── train_finetune_xgb.py
+│   ├── run_resource_benchmark.py
+│   ├── run_renewables_benchmark.py
+│   ├── run_graph_topk_sweep.py
 │   ├── run_finetune_sweep.py
 │   └── run_finetune_sweep_xgb.py
+├── tests/
 ├── requirements.txt
 └── pyproject.toml
 ```
@@ -255,7 +256,27 @@ Les mètriques principals són:
 - MAE per target (`solar`, `wind`, `hydro`, `renewable_total`).
 - temps d'entrenament, memòria, mida de model, latència i throughput.
 
-### 5. Entrenar baselines clàssics
+### 3c. Sensibilitat de la topologia GraphSAGE
+
+Per comparar diverses densitats del graf de demanda:
+
+```bash
+python src/run_graph_topk_sweep.py \
+  --top_k_values 1 2 3 5 7 \
+  --seeds 42 123 2024 \
+  --epochs 500 \
+  --patience 20 \
+  --output_dir artifacts/metrics/graph_topk_sweep \
+  --skip_existing
+```
+
+Sortides:
+
+- `artifacts/metrics/graph_topk_sweep/graph_topk_sweep_rows.csv`
+- `artifacts/metrics/graph_topk_sweep/graph_topk_sweep_aggregate.csv`
+- `artifacts/metrics/graph_topk_sweep/graph_topk_sweep_summary.json`
+
+### 4. Entrenar baselines clàssics
 
 ```bash
 python src/models/baselines.py
@@ -268,7 +289,7 @@ Genera:
 - `artifacts/models/baseline_xgb_features.json`
 - `artifacts/metrics/baseline_metrics.json`
 
-### 6. Entrenar el baseline MLP
+### 5. Entrenar el baseline MLP
 
 ```bash
 python src/train.py --seed 42 --epochs 30
@@ -279,7 +300,7 @@ Genera:
 - `artifacts/models/mlp_tabular_long_seed42.pt`
 - `artifacts/metrics/mlp_metrics_seed42.json`
 
-### 7. Fine-tuning few-shot del MLP
+### 6. Fine-tuning few-shot del MLP
 
 ```bash
 python src/train_finetune.py \
@@ -288,7 +309,7 @@ python src/train_finetune.py \
   --epochs 15
 ```
 
-### 8. Sweep few-shot del MLP
+### 7. Sweep few-shot del MLP
 
 ```bash
 python src/run_finetune_sweep.py \
@@ -296,7 +317,7 @@ python src/run_finetune_sweep.py \
   --fractions 0.01 0.02 0.05 0.10
 ```
 
-### 9. Fine-tuning few-shot de XGBoost
+### 8. Fine-tuning few-shot de XGBoost
 
 ```bash
 python src/train_finetune_xgb.py \
@@ -305,7 +326,7 @@ python src/train_finetune_xgb.py \
   --target_fraction 0.05
 ```
 
-### 10. Sweep few-shot de XGBoost
+### 9. Sweep few-shot de XGBoost
 
 ```bash
 python src/run_finetune_sweep_xgb.py \
@@ -323,6 +344,7 @@ python src/visualization/plot_baselines.py
 python src/visualization/plot_feature_importance.py
 python src/visualization/plot_mlp_vs_xgboost.py
 python src/visualization/plot_day_ahead_benchmark.py
+python src/visualization/plot_graph_topology.py
 python src/visualization/plot_gnn_architecture.py
 ```
 
@@ -352,23 +374,29 @@ Si no es defineix, `MLflow` farà servir la configuració per defecte.
 ### Models
 
 - `src/models/baselines.py`: entrena `Daily Naive`, `Ridge` i `XGBoost`.
+- `src/models/graphsage.py`: defineix el baseline `GraphSAGE`.
 - `src/models/mlp_baseline.py`: defineix el baseline `MLP`.
 - `src/train.py`: entrena el `MLP` sobre source i avalua zero-shot sobre target.
+- `src/train_gnn.py`: entrena el `GraphSAGE` diagnòstic sobre demanda.
 - `src/train_finetune.py`: fine-tuning few-shot del `MLP`.
 - `src/train_finetune_xgb.py`: fine-tuning few-shot de `XGBoost`.
+- `src/benchmarking/`: perfils reproduïbles de recursos per `XGBoost`, `MLP`, `GraphSAGE` i renovables.
 
 ### Anàlisi
 
 - `src/models/ablation_features.py`: ablació de grups de variables.
 - `src/models/ablation_weather.py`: impacte de la informació meteorològica.
 - `src/models/evaluate_day_ahead_benchmark.py`: benchmark day-ahead.
+- `src/run_resource_benchmark.py`: comparativa unificada de recursos en demanda.
+- `src/run_renewables_benchmark.py`: comparativa unificada de recursos en renovables.
+- `src/run_graph_topk_sweep.py`: sensibilitat del graf GraphSAGE al nombre de veïns.
 - `notebooks/eda.ipynb`: anàlisi exploratòria inicial.
 
 ## Limitacions conegudes
 
-- no hi ha encara implementació d’OT ni de GNN,
-- no hi ha suite de tests automatitzada,
-- el projecte continua tenint estructura de codi de recerca, no de producte.
+- el projecte manté una estructura de codi de recerca, no de producte,
+- no s'ha incorporat una cerca exhaustiva d'hiperparàmetres equivalent per totes les famílies de models,
+- les dades, mètriques i figures generades es mantenen fora de Git per evitar pujar artefactes pesants.
 
 ## Llicència
 
