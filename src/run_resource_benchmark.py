@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gnn_epochs", type=int, default=500)
     p.add_argument("--gnn_patience", type=int, default=20)
     p.add_argument("--gnn_log_every", type=int, default=5)
+    p.add_argument("--graph_top_k", type=int, default=3)
     p.add_argument("--output_dir", type=Path, default=METRICS_DIR / "resource_benchmark")
     return p.parse_args()
 
@@ -155,7 +156,7 @@ def run_seed(args: argparse.Namespace, seed: int) -> dict[str, dict]:
         f"[Runner] Unified benchmark seed start | seed={seed} | pred_len={args.pred_len} | "
         f"xgb_n_jobs={args.xgb_n_jobs} | xgb_estimators={args.xgb_estimators} | "
         f"mlp_epochs={args.mlp_epochs} patience={args.mlp_patience} | "
-        f"gnn_epochs={args.gnn_epochs} patience={args.gnn_patience}"
+        f"gnn_epochs={args.gnn_epochs} patience={args.gnn_patience} | graph_top_k={args.graph_top_k}"
     )
     outputs = {
         "xgboost": args.output_dir / f"xgb_seed{seed}.json",
@@ -203,6 +204,7 @@ def run_seed(args: argparse.Namespace, seed: int) -> dict[str, dict]:
             "--epochs", str(args.gnn_epochs),
             "--patience", str(args.gnn_patience),
             "--log_every", str(args.gnn_log_every),
+            "--graph_top_k", str(args.graph_top_k),
             "--output", str(outputs["graphsage"]),
         ],
     )
@@ -229,7 +231,7 @@ def main() -> None:
         f"[Runner] Unified benchmark start | seeds={seeds} | pred_len={args.pred_len} | "
         f"xgb_n_jobs={args.xgb_n_jobs} | xgb_estimators={args.xgb_estimators} | "
         f"mlp_epochs={args.mlp_epochs} patience={args.mlp_patience} | "
-        f"gnn_epochs={args.gnn_epochs} patience={args.gnn_patience}"
+        f"gnn_epochs={args.gnn_epochs} patience={args.gnn_patience} | graph_top_k={args.graph_top_k}"
     )
     ensure_artifact_dirs()
     args.output_dir.mkdir(parents=True, exist_ok=True)

@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--hidden_dims", type=int, nargs="+", default=[256, 128, 64])
+    p.add_argument("--graph_top_k", type=int, default=3, help="Top-k correlated neighbors per graph node")
     p.add_argument("--warmup_batches", type=int, default=3)
     p.add_argument("--timed_batches", type=int, default=20)
     p.add_argument("--log_every", type=int, default=5)
@@ -122,7 +123,11 @@ def main() -> None:
     args = parse_args()
     set_seed(args.seed)
     ensure_artifact_dirs()
-    print(f"[GraphSAGE] Starting profile | seed={args.seed} | epochs={args.epochs} | patience={args.patience}", flush=True)
+    print(
+        f"[GraphSAGE] Starting profile | seed={args.seed} | graph_top_k={args.graph_top_k} | "
+        f"epochs={args.epochs} | patience={args.patience}",
+        flush=True,
+    )
 
     train_loader, val_loader, test_loader, feature_cols, target_cols, feature_params, target_params = get_graph_dataloaders(
         Path(ROOT),
@@ -130,6 +135,7 @@ def main() -> None:
         batch_size=args.batch_size,
         include_temporal=True,
         include_weather=True,
+        graph_top_k=args.graph_top_k,
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -269,7 +275,7 @@ def main() -> None:
         ),
     }
 
-    model_path = MODELS_DIR / f"resource_graphsage_seed{args.seed}.pt"
+    model_path = MODELS_DIR / f"resource_{args.output.stem}.pt"
     intervals_path = args.output.with_name(f"{args.output.stem}_prediction_intervals.parquet")
     pd.concat(interval_frames, ignore_index=True).to_parquet(intervals_path, index=False)
     torch.save(
@@ -301,6 +307,13 @@ def main() -> None:
     )
 
     payload = output.to_dict()
+    first_graph = train_loader.dataset[0]
+    payload["graph"] = {
+        "top_k": int(args.graph_top_k),
+        "n_nodes": int(first_graph.num_nodes),
+        "n_directed_edges": int(first_graph.edge_index.shape[1]),
+        "n_undirected_edges": int(first_graph.edge_index.shape[1] // 2),
+    }
     payload["fit_metrics_raw"] = metrics_raw
     payload["losses"] = {
         "source_train": float(source_train_loss),

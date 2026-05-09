@@ -51,30 +51,32 @@ def build_static_graph(train_df: pd.DataFrame, nodes: list[str], top_k: int = 3)
     """
     Build static graph using demand correlation in the training set.
     Connects each node to its top_k most correlated neighbors.
-    Symmetrizes the graph and assigns the positive correlation as edge weight.
+    Symmetrizes the graph and uses the train-split correlation as edge weight.
     """
     # Calculate correlation based on the original demand (before or after scaling is identical for Pearson corr)
     demand_df = train_df.pivot(index="utc_timestamp", columns="country_code", values="demand")[nodes]
     corr = demand_df.corr().values
     
     num_nodes = len(nodes)
+    effective_top_k = max(0, min(top_k, num_nodes - 1))
     unique_edges = {}
     
     for i in range(num_nodes):
         c = corr[i].copy()
         c[i] = -1.0 # Ignore self-loop
-        top_indices = np.argsort(c)[-top_k:]
+        top_indices = np.argsort(c)[-effective_top_k:] if effective_top_k else []
         for j in top_indices:
+            if i == int(j):
+                continue
             unique_edges[(i, j)] = corr[i, j]
             unique_edges[(j, i)] = corr[j, i] # ensure symmetry physically although corr is symmetric
 
-    # Filter to only keep positive weights
+    # All edge weights are included directly
     filtered_edges = []
     filtered_weights = []
     for (i, j), w in unique_edges.items():
-        if w > 0:
-            filtered_edges.append((i, j))
-            filtered_weights.append(w)
+        filtered_edges.append((i, j))
+        filtered_weights.append(w)
             
     if not filtered_edges:
         # Fallback fully connected if something goes completely wrong
@@ -144,6 +146,7 @@ def get_graph_dataloaders(
     batch_size: int,
     include_temporal: bool,
     include_weather: bool,
+    graph_top_k: int = 3,
 ) -> tuple:
     # 1. Load data
     train_all = load_split(PROCESSED_DATA_DIR / "train.parquet")
@@ -170,7 +173,7 @@ def get_graph_dataloaders(
     )
     
     # 5. Build static graph using train_all
-    edge_index, edge_weight = build_static_graph(train_all, nodes=nodes, top_k=3)
+    edge_index, edge_weight = build_static_graph(train_all, nodes=nodes, top_k=graph_top_k)
     
     # 6. Global scaling based on all domains together across train
     (
@@ -212,4 +215,3 @@ def get_graph_dataloaders(
         feature_params,
         target_params,
     )
-
