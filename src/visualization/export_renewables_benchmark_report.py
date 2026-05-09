@@ -70,6 +70,16 @@ def _fmt_int(value: int) -> str:
     return f"{int(value):,}".replace(",", ".")
 
 
+def _fmt_date(value: object) -> str:
+    return pd.to_datetime(value, utc=True).strftime("%d-%m-%Y")
+
+
+def _fmt_optional_pm(mean: float, std: float | None = None, digits: int = 1) -> str:
+    if std is None:
+        return _fmt(mean, digits)
+    return _fmt_pm(mean, std, digits)
+
+
 def load_payload(seed: int) -> dict:
     summary_json = METRICS_DIR / "renewables_resource_benchmark" / f"renewables_resource_benchmark_seed{seed}.json"
     if not summary_json.exists():
@@ -197,9 +207,133 @@ def _delta_text(rows: list[dict], model_name: str, metric: str) -> str:
     return f"manté {metric} sense canvis apreciables"
 
 
+def _load_demand_h1_predictions(seed: int) -> pd.DataFrame:
+    path = METRICS_DIR / "resource_benchmark" / f"xgb_seed{seed}_prediction_intervals.parquet"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing demand prediction intervals: {path}")
+
+    frame = pd.read_parquet(
+        path,
+        columns=[
+            "country_code",
+            "split",
+            "calibration",
+            "horizon",
+            "forecast_timestamp",
+            "y_true_mw",
+            "pred_mw",
+        ],
+    )
+    frame = frame[
+        (frame["country_code"] == "ES")
+        & (frame["split"] == "target_test")
+        & (frame["calibration"] == "source_val")
+        & (frame["horizon"] == 1)
+    ].copy()
+    frame = frame.rename(
+        columns={
+            "forecast_timestamp": "target_timestamp",
+            "y_true_mw": "demand_true",
+            "pred_mw": "demand_pred",
+        }
+    )
+    return frame[["target_timestamp", "demand_true", "demand_pred"]]
+
+
+def _load_renewable_total_predictions(seed: int, model_key: str) -> pd.DataFrame:
+    model_name, feature_set = _split_model_key(model_key)
+    path = (
+        METRICS_DIR
+        / "renewables_resource_benchmark"
+        / f"{model_name}_{feature_set}_seed{seed}_target_test_predictions.parquet"
+    )
+    if not path.exists():
+        raise FileNotFoundError(f"Missing renewables target-test predictions: {path}")
+
+    frame = pd.read_parquet(
+        path,
+        columns=["country_code", "target_timestamp", "target", "y_true", "pred"],
+    )
+    frame = frame[
+        (frame["country_code"] == "ES")
+        & (frame["target"] == "y_renewable_total_mwh")
+    ].copy()
+    frame = frame.rename(columns={"y_true": "renewable_true", "pred": "renewable_pred"})
+    return frame[["target_timestamp", "renewable_true", "renewable_pred"]]
+
+
+def _compute_balance_metrics(demand: pd.DataFrame, renewables: pd.DataFrame) -> dict[str, float]:
+    aligned = demand.merge(renewables, on="target_timestamp", how="inner")
+    if aligned.empty:
+        raise ValueError("No aligned timestamps between demand and renewables predictions")
+
+    demand_true = aligned["demand_true"].to_numpy(dtype=float)
+    demand_pred = aligned["demand_pred"].to_numpy(dtype=float)
+    renewable_true = aligned["renewable_true"].to_numpy(dtype=float)
+    renewable_pred = aligned["renewable_pred"].clip(lower=0).to_numpy(dtype=float)
+
+    actual_residual = (demand_true - renewable_true).clip(min=0)
+    predicted_residual = (demand_pred - renewable_pred).clip(min=0)
+    actual_share = renewable_true / demand_true * 100.0
+    predicted_share = renewable_pred / demand_pred * 100.0
+
+    return {
+        "n_samples": float(len(aligned)),
+        "demand_true_gwh": float(demand_true.mean() / 1000.0),
+        "renewable_true_gwh": float(renewable_true.mean() / 1000.0),
+        "actual_share_pct": float(actual_share.mean()),
+        "actual_residual_gwh": float(actual_residual.mean() / 1000.0),
+        "demand_pred_gwh": float(demand_pred.mean() / 1000.0),
+        "renewable_pred_gwh": float(renewable_pred.mean() / 1000.0),
+        "predicted_share_pct": float(predicted_share.mean()),
+        "predicted_residual_gwh": float(predicted_residual.mean() / 1000.0),
+        "residual_mae_gwh": float(abs(actual_residual - predicted_residual).mean() / 1000.0),
+        "share_mae_pct_points": float(abs(actual_share - predicted_share).mean()),
+    }
+
+
+def _aggregate_balance(rows: list[dict[str, float]]) -> dict[str, float]:
+    frame = pd.DataFrame(rows)
+    out: dict[str, float] = {}
+    for column in frame.columns:
+        values = pd.to_numeric(frame[column], errors="coerce").dropna()
+        out[column] = float(values.mean()) if len(values) else float("nan")
+        out[f"{column}_std"] = float(values.std(ddof=1)) if len(values) > 1 else 0.0
+    return out
+
+
+def load_operational_balance_rows(seeds: list[int]) -> tuple[dict[str, float], list[dict]]:
+    demand_by_seed = {seed: _load_demand_h1_predictions(seed) for seed in seeds}
+
+    observed_seed_rows = [
+        _compute_balance_metrics(demand_by_seed[seed], _load_renewable_total_predictions(seed, "xgboost_external"))
+        for seed in seeds
+    ]
+    observed = _aggregate_balance(observed_seed_rows)
+
+    rows: list[dict] = []
+    for key in MODEL_ORDER:
+        model_name, feature_set = _split_model_key(key)
+        seed_rows = [
+            _compute_balance_metrics(demand_by_seed[seed], _load_renewable_total_predictions(seed, key))
+            for seed in seeds
+        ]
+        aggregate = _aggregate_balance(seed_rows)
+        aggregate.update(
+            {
+                "key": key,
+                "model_name": PRETTY_MODEL[model_name],
+                "feature_set": PRETTY_FEATURE_SET[feature_set],
+            }
+        )
+        rows.append(aggregate)
+    return observed, rows
+
+
 def render_report_block(
     rows: list[dict],
     dataset_stats: dict[str, object],
+    operational_balance: tuple[dict[str, float], list[dict]] | None = None,
     *,
     multiseed: bool = False,
     seeds: list[int] | None = None,
@@ -210,27 +344,28 @@ def render_report_block(
     best_total = _best_row(rows, "total_mae")
 
     lines: list[str] = []
-    lines.append(r"\section{Generació Renovable Horària}")
+    lines.append(r"\section{Predicció de generació renovable}")
+    lines.append(r"\subsection{Plantejament i diferències respecte a demanda}")
     lines.append(
-        "Aquest segon cas d'estudi reutilitza el mateix marc experimental en una tasca on el senyal físic és més immediat. "
-        "La demanda elèctrica depèn fortament de calendari i inèrcia autoregressiva; la generació renovable, en canvi, "
-        "respon a patrons atmosfèrics i operatius que poden canviar d'una hora a la següent. Per això aquest bloc serveix "
-        "com a contrast natural del cas de demanda."
+        "El segon cas d'estudi aplica el mateix marc experimental a una tasca amb una dependència física més directa. "
+        "Mentre que la demanda elèctrica està molt marcada pel calendari i per la inèrcia autoregressiva, la generació renovable "
+        "canvia amb les condicions atmosfèriques i amb factors operatius que poden variar d'una hora a la següent."
     )
-
-    lines.append(r"\subsection{Objectiu de l'experiment}")
     lines.append(
         "La tasca definida és una predicció horària a horitzó $H+1$. Per a cada país i hora $H$, el model rep informació "
-        "disponible fins a aquell instant i prediu els valors agregats de la següent hora. Els objectius són:"
+        "disponible fins a aquell instant i prediu els valors agregats de la següent hora. Els objectius són la generació "
+        "solar, eòlica, hidràulica i el total renovable. Com a nota metodològica, el percentatge renovable es deriva "
+        "posteriorment a partir de la producció agregada i no s'entrena com una sortida pròpia del model."
     )
-    lines.append(r"\[")
-    lines.append(r"\texttt{solar\_mwh},\quad")
-    lines.append(r"\texttt{wind\_mwh},\quad")
-    lines.append(r"\texttt{hydro\_mwh},\quad")
-    lines.append(r"\texttt{renewable\_total\_mwh}.")
-    lines.append(r"\]")
+    lines.append(
+        "En renovables, l'objectiu no és només una prolongació autoregressiva. La solar, l'eòlica i la hidràulica responen a mecanismes "
+        "físics diferents, de manera que la configuració externa incorpora un paquet meteorològic més ampli que en demanda: temperatura, "
+        "humitat, precipitació, nuvolositat, radiació solar, durada d'insolació i vent a 10 i 100 metres, juntament amb agregats diaris "
+        "coherents amb aquestes variables. Amb aquesta configuració es pot veure fins a quin punt la meteorologia afegeix informació "
+        "sobre els lags, les mitjanes mòbils i el calendari."
+    )
 
-    lines.append(r"\subsection{Metodologia i construcció del dataset}")
+    lines.append(r"\subsection{Dades, variables i protocol experimental}")
     lines.append(
         "Les dades de generació provenen d'ENTSO-E, concretament de les sèries d'\\textit{Actual Generation per Production Type}. "
         "Cada registre horari o subhorari de potència es transforma primer a energia amb la durada real de l'interval, i "
@@ -246,84 +381,58 @@ def render_report_block(
         "renovables. S'exclou explícitament \\texttt{Hydro Pumped Storage} perquè representa emmagatzematge i no generació renovable primària."
     )
     lines.append(
-        "El protocol de validació manté la filosofia de transferència del benchmark de demanda: Espanya actua com a domini objectiu i "
-        "els altres set països com a dominis font. Els models s'entrenen només sobre fonts i s'avaluen en \\textit{zero-shot} sobre Espanya."
+        "El protocol de validació manté la filosofia de transferència de la comparativa de demanda: Espanya actua com a domini objectiu i "
+        "els altres set països com a dominis font. Els models s'entrenen només sobre fonts i s'avaluen en transferència directa sobre Espanya."
     )
-
-    lines.append(r"\subsection{Diferències respecte al cas de demanda}")
-    lines.append(
-        "En renovables, el target no és només una prolongació autoregressiva. La solar depèn del perfil diürn i de la temperatura; "
-        "l'eòlica respon més directament a variacions de vent; la hidràulica conserva una component d'inèrcia més gran. Això canvia la "
-        "lectura del benchmark: aquí no n'hi ha prou amb veure si un model aprèn lags, sinó si també sap aprofitar covariables físiques "
-        "quan realment afegeixen senyal útil."
-    )
-
-    lines.append(r"\subsection{Variables externes i hipòtesi meteorològica}")
     lines.append(r"\begin{itemize}")
     lines.append(r"    \item \textbf{Sense variables externes:} valors actuals, lags horaris, mitjanes mòbils, calendari local i país.")
     lines.append(
-        r"    \item \textbf{Amb variables externes:} les mateixes variables més la temperatura horària i els agregats diaris "
-        r"de temperatura del pipeline d'Open-Meteo."
+        r"    \item \textbf{Amb variables externes:} les mateixes variables més covariables d'Open-Meteo sobre temperatura, "
+        r"humitat, precipitació, nuvolositat, radiació, insolació i vent, agregades per país i alineades amb l'hora objectiu."
     )
     lines.append(r"\end{itemize}")
     lines.append(
         "La informació externa s'alinea a l'hora objectiu $H+1$. Això equival a assumir una proxy perfecta d'una previsió meteorològica "
-        "a una hora vista, de manera coherent amb l'objectiu d'aïllar el valor potencial de les covariables exògenes sense introduir "
+        "a una hora vista, de manera coherent amb l'objectiu d'aïllar el valor potencial d'aquestes covariables sense introduir "
         "l'error propi d'un sistema meteorològic operatiu."
     )
-
-    lines.append(r"\subsection{Execució reproduïble}")
-    lines.append(r"La construcció del dataset i el benchmark complet executat per a aquesta secció han estat:")
-    lines.append(r"\begin{verbatim}")
-    lines.append("python src/data/download_weather.py")
-    lines.append("python src/data/preprocess_renewables.py --include_external")
-    lines.append("python src/run_renewables_benchmark.py \\")
-    lines.append("  --seeds 42 123 2024 \\")
-    lines.append("  --models xgboost mlp graphsage \\")
-    lines.append("  --feature_sets no_external external \\")
-    lines.append("  --xgb_estimators 100 \\")
-    lines.append("  --xgb_n_jobs 4 \\")
-    lines.append("  --torch_epochs 300 \\")
-    lines.append("  --torch_patience 20 \\")
-    lines.append("  --batch_size 256 \\")
-    lines.append("  --log_every 10")
-    lines.append(r"\end{verbatim}")
+    lines.append(
+        "El protocol segueix el mateix criteri del cas de demanda: comparar XGBoost, MLP i GraphSAGE amb el mateix tall temporal, "
+        "el mateix domini objectiu i les mateixes famílies de variables. Per separar l'efecte de la informació externa disponible, cada model "
+        "s'avalua en dues configuracions: una només amb senyal temporal i autoregressiu, i una altra amb covariables meteorològiques "
+        "alineades amb l'horitzó $H+1$."
+    )
     if multiseed:
         seed_text = ", ".join(str(seed) for seed in seeds or [])
         lines.append(
-            "Per reforçar la robustesa estadística, el benchmark final s'ha executat amb tres llavors "
-            f"(\\texttt{{{seed_text}}}). Les taules reporten mitjana $\\pm$ desviació estàndard i el total renovable inclou "
-            "un interval de confiança bootstrap al 95\\% sobre el MAE del test objectiu. Aquesta anàlisi quantifica variabilitat "
-            "experimental, però no s'interpreta com una comparació estadística exhaustiva de significança entre models."
+            "L'avaluació final utilitza tres llavors "
+            f"({seed_text}). Les taules reporten mitjana $\\pm$ desviació estàndard i el total renovable inclou "
+            "un interval de confiança bootstrap al 95\\% sobre el MAE del conjunt de prova objectiu. Aquesta presentació recull la variabilitat "
+            "entre execucions, sense plantejar una prova formal de significança entre models."
         )
-    lines.append(r"L'execució genera els fitxers:")
-    lines.append(r"\begin{itemize}")
-    lines.append(r"    \item \path{data/processed_renewables_hourly/train.parquet}")
-    lines.append(r"    \item \path{data/processed_renewables_hourly/val.parquet}")
-    lines.append(r"    \item \path{data/processed_renewables_hourly/test.parquet}")
-    lines.append(r"    \item \path{artifacts/metrics/renewables_resource_benchmark/}: resum CSV i JSON de l'execució.")
-    lines.append(r"\end{itemize}")
+    else:
+        lines.append(
+            "En aquesta versió d'una sola llavor, les taules mostren el resultat puntual del model i ofereixen una primera comparació "
+            "del comportament relatiu entre arquitectures."
+        )
     lines.append(
-        "El dataset resultant conté \\textbf{"
+        "El conjunt final conté \\textbf{"
         + _fmt_int(dataset_stats["n_rows"])
         + "} mostres i \\textbf{"
         + _fmt_int(dataset_stats["n_cols"])
-        + "} columnes. El rang temporal efectiu va de "
-        + str(dataset_stats["input_min"])
-        + " a "
-        + str(dataset_stats["input_max"])
-        + " com a timestamp d'entrada, amb objectius entre "
-        + str(dataset_stats["target_min"])
-        + " i "
-        + str(dataset_stats["target_max"])
+        + "} columnes. Les particions es defineixen segons l'instant objectiu $H+1$; per això, en validació i prova, "
+        "l'entrada pot començar una hora abans del tall formal del període. El rang efectiu d'objectius va del "
+        + _fmt_date(dataset_stats["target_min"])
+        + " al "
+        + _fmt_date(dataset_stats["target_max"])
         + "."
     )
 
-    lines.append(r"\subsection{Resultats}")
+    lines.append(r"\subsection{Resultats i interpretació}")
     lines.append(
         "La Taula~\\ref{tab:renewables_target_metrics} mostra l'error absolut mitjà sobre Espanya en escala física. "
         "A diferència de la demanda, aquí es reporten els objectius per separat perquè cadascuna de les tecnologies respon "
-        "a mecanismes físics diferents i el total renovable resumeix el compromís agregat."
+        "a mecanismes físics diferents i el total renovable resumeix el resultat agregat."
     )
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
@@ -367,27 +476,28 @@ def render_report_block(
     lines.append(r"    \end{tabular}%")
     lines.append(r"    }")
     lines.append(
-        r"    \caption{MAE sobre Espanya en el benchmark horari de renovables. Totes les columnes s'expressen en MWh.}"
+        r"    \caption{MAE sobre Espanya en la comparativa horària de renovables. Totes les columnes s'expressen en MWh.}"
     )
     lines.append(r"    \label{tab:renewables_target_metrics}")
     lines.append(r"\end{table}")
     lines.append(r"\FloatBarrier")
 
     lines.append(
-        "La lectura per targets és menys uniforme que en la versió diària antiga. En aquesta execució, el millor MAE en solar correspon a "
+        "Els resultats per objectiu són heterogenis. En aquest escenari horari, el millor MAE en solar correspon a "
         f"\\textbf{{{best_solar['model_name']}}} ({best_solar['feature_set'].lower()}), mentre que el millor resultat en eòlica i en total "
         f"renovable el dona \\textbf{{{best_wind['model_name']}}} amb externes. La hidràulica es manté més favorable a una formulació tabular "
         f"sense externes."
     )
     lines.append(
-        "Això suggereix que l'efecte de les covariables externes depèn fortament del target. En XGBoost, afegir temperatura i estadístics "
-        f"diaris millora sobretot l'eòlica i el total renovable; en GraphSAGE també redueix el MAE del total renovable de manera visible; "
-        f"en MLP, en canvi, l'ajuda és més clara en eòlica i hidràulica que no pas en el total agregat."
+        "Això suggereix que l'efecte del paquet meteorològic depèn fortament de l'objectiu i del model. En XGBoost, afegir variables externes "
+        f"millora la solar, l'eòlica i el total renovable; en GraphSAGE redueix lleugerament el MAE del total renovable però empitjora altres "
+        f"objectius; en MLP, en canvi, el total no millora tot i que la solar sí que es beneficia de la informació externa. "
+        "Per tant, les variables externes no s'han d'interpretar com un guany universal, sinó com una informació addicional que modifica el rànquing en alguns objectius."
     )
 
     lines.append(
-        "La Taula~\\ref{tab:renewables_resource_metrics} resumeix el cost computacional de la mateixa execució. "
-        "Totes les mesures s'han obtingut en CPU i la latència correspon al temps mitjà d'inferència per batch sobre el test objectiu."
+        "La Taula~\\ref{tab:renewables_resource_metrics} resumeix el cost computacional del mateix protocol. "
+        "Totes les mesures s'han obtingut en CPU i la latència correspon al temps mitjà d'inferència per lot sobre el conjunt de prova objectiu."
     )
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
@@ -395,7 +505,7 @@ def render_report_block(
     lines.append(r"    \resizebox{0.98\textwidth}{!}{%")
     lines.append(r"    \begin{tabular}{llrrrr}")
     lines.append(r"        \toprule")
-    lines.append(r"        Model & Configuració & Train time (s) & Peak RSS (MB) & Inference mean (ms) & Model size (MB) \\")
+    lines.append(r"        Model & Configuració & Temps entr. (s) & Pic RSS (MB) & Inferència mitjana (ms) & Mida model (MB) \\")
     lines.append(r"        \midrule")
     for row in rows:
         if multiseed:
@@ -427,32 +537,130 @@ def render_report_block(
     lines.append(r"    \end{tabular}%")
     lines.append(r"    }")
     lines.append(
-        r"    \caption{Cost computacional del benchmark horari de renovables. La latència d'inferència és la mitjana per batch sobre el test objectiu.}"
+        r"    \caption{Cost computacional de la comparativa horària de renovables. La latència d'inferència és la mitjana per lot sobre el conjunt de prova objectiu.}"
     )
     lines.append(r"    \label{tab:renewables_resource_metrics}")
     lines.append(r"\end{table}")
     lines.append(r"\FloatBarrier")
 
     lines.append(
-        "La lectura conjunta reforça la tesi central del treball: la complexitat arquitectònica no garanteix el millor compromís final. "
-        "XGBoost continua essent el millor referent global quan es mira el total renovable i el cost, perquè combina el millor MAE agregat "
+        "En conjunt, la complexitat arquitectònica no es tradueix automàticament en un millor resultat pràctic. "
+        "XGBoost continua essent el referent global quan es mira el total renovable i el cost, perquè combina el millor MAE agregat "
         f"({best_total['feature_set'].lower()}) amb un temps d'entrenament molt inferior al de les alternatives neuronals. La MLP manté la "
-        "inferència més lleugera i excel·leix en solar, però no domina el total. GraphSAGE millora respecte a la seva "
-        "variant sense externes i queda competitiu en alguns targets, però ho fa amb una latència i un cost d'entrenament clarament més alts."
+        "inferència més lleugera i excel·leix en solar sense externes, però no domina el total. GraphSAGE millora respecte a la seva "
+        "variant sense externes en el total renovable i queda competitiu en alguns objectius, però ho fa amb una latència i un cost d'entrenament clarament més alts."
+    )
+    lines.append(
+        "El cas renovable matisa el que s'havia observat en demanda. Quan l'objectiu depèn més directament de factors físics, un "
+        "paquet meteorològic més ric pot modificar el rànquing segons la tecnologia, però el seu efecte no és uniforme. En aquest escenari, "
+        "l'XGBoost continua sent la referència més sòlida sobre el total renovable."
+    )
+    lines.append(
+        "La MLP aprofita bé el patró solar, GraphSAGE no transforma la informació meteorològica en un guany uniforme, i XGBoost manté "
+        "el millor equilibri entre precisió agregada i cost. El resultat és coherent amb el criteri general del treball: una arquitectura "
+        "més complexa només és preferible si el guany és prou estable per compensar l'increment de recursos."
     )
 
-    lines.append(r"\subsection{Lectura metodològica del bloc renovable}")
-    lines.append(
-        "El cas renovable horari matisa la conclusió obtinguda en demanda. Quan el target depèn més directament de factors físics, les "
-        "variables externes deixen de ser un refinament marginal i poden modificar el rànquing segons la tecnologia. Tanmateix, aquesta "
-        "dependència no fa desaparèixer la necessitat d'un baseline tabular fort: l'XGBoost continua sent la millor referència sobre el total renovable."
-    )
-    lines.append(
-        "La lectura també ajuda a entendre el paper dels models. La MLP aprofita bé un problema més local i més instantani com la solar, "
-        "GraphSAGE guanya robustesa en el total quan rep externes, i XGBoost manté el millor equilibri entre precisió agregada i cost. "
-        "Això encaixa amb el fil conductor del TFG: abans de justificar una arquitectura més complexa, cal comprovar si el guany és estable "
-        "i prou gran per compensar l'increment de recursos."
-    )
+    if operational_balance is not None:
+        observed_balance, balance_rows = operational_balance
+        best_balance = min(balance_rows, key=lambda row: row["residual_mae_gwh"])
+        xgb_external_balance = next(row for row in balance_rows if row["key"] == "xgboost_external")
+
+        lines.append(r"\subsection{Balanç demanda-renovables}")
+        lines.append(
+            "Per connectar la predicció renovable amb la necessitat real del sistema, es creua el total renovable $H+1$ amb la "
+            "predicció de demanda $H+1$ de la comparativa anterior. Com que la demanda es mesura com a potència mitjana horària, en "
+            "aquest càlcul s'interpreta com energia equivalent d'una hora i es compara amb la generació renovable horària."
+        )
+        lines.append(r"\[")
+        lines.append(r"\begin{aligned}")
+        lines.append(r"\text{Cobertura renovable}_{t} &= \frac{\text{Renovable}_{t}}{\text{Demanda}_{t}} \cdot 100,\\")
+        lines.append(r"\text{No renovable necessària}_{t} &= \max(\text{Demanda}_{t} - \text{Renovable}_{t}, 0).")
+        lines.append(r"\end{aligned}")
+        lines.append(r"\]")
+        lines.append(
+            "Aquesta taula no substitueix les mètriques de predicció anteriors; les tradueix a una pregunta operativa: "
+            "quanta demanda quedaria per cobrir amb generació no renovable o altres recursos gestionables si es prenguessin "
+            "les prediccions com a base de programació."
+        )
+        lines.append(r"\begin{table}[htbp]")
+        lines.append(r"    \centering")
+        lines.append(r"    \small")
+        lines.append(r"    \resizebox{0.98\textwidth}{!}{%")
+        lines.append(r"    \begin{tabular}{llrrrrr}")
+        lines.append(r"        \toprule")
+        lines.append(
+            r"        Escenari & Configuració & Demanda & Renovable & Cobertura renovable & No renovable necessària & MAE no renov. \\"
+        )
+        lines.append(r"        \midrule")
+        lines.append(
+            "        Observat & Test ES & "
+            + _fmt(observed_balance["demand_true_gwh"], 2)
+            + " & "
+            + _fmt(observed_balance["renewable_true_gwh"], 2)
+            + " & "
+            + _fmt(observed_balance["actual_share_pct"], 1)
+            + r"\% & "
+            + _fmt(observed_balance["actual_residual_gwh"], 2)
+            + r" & -- \\"
+        )
+        for row in balance_rows:
+            if multiseed:
+                demand = _fmt_optional_pm(row["demand_pred_gwh"], row["demand_pred_gwh_std"], 2)
+                renewable = _fmt_optional_pm(row["renewable_pred_gwh"], row["renewable_pred_gwh_std"], 2)
+                share = _fmt_optional_pm(row["predicted_share_pct"], row["predicted_share_pct_std"], 1)
+                residual = _fmt_optional_pm(row["predicted_residual_gwh"], row["predicted_residual_gwh_std"], 2)
+                residual_mae = _fmt_optional_pm(row["residual_mae_gwh"], row["residual_mae_gwh_std"], 2)
+            else:
+                demand = _fmt(row["demand_pred_gwh"], 2)
+                renewable = _fmt(row["renewable_pred_gwh"], 2)
+                share = _fmt(row["predicted_share_pct"], 1)
+                residual = _fmt(row["predicted_residual_gwh"], 2)
+                residual_mae = _fmt(row["residual_mae_gwh"], 2)
+            lines.append(
+                "        "
+                + row["model_name"]
+                + " & "
+                + row["feature_set"]
+                + " & "
+                + demand
+                + " & "
+                + renewable
+                + " & "
+                + share
+                + r"\% & "
+                + residual
+                + " & "
+                + residual_mae
+                + r" \\"
+            )
+        lines.append(r"        \bottomrule")
+        lines.append(r"    \end{tabular}%")
+        lines.append(r"    }")
+        lines.append(
+            r"    \caption{Balanç operatiu entre demanda horària i generació renovable prevista sobre Espanya. "
+            r"Demanda, renovable, generació no renovable necessària i el seu MAE s'expressen en GWh equivalents per hora.}"
+        )
+        lines.append(r"    \label{tab:renewables_operational_balance}")
+        lines.append(r"\end{table}")
+        lines.append(r"\FloatBarrier")
+        lines.append(
+            "En les dades observades del test, la generació renovable cobreix de mitjana el "
+            + _fmt(observed_balance["actual_share_pct"], 1)
+            + "\\% de la demanda espanyola, deixant una generació no renovable necessària mitjana de "
+            + _fmt(observed_balance["actual_residual_gwh"], 2)
+            + " GWh per hora. Amb la combinació XGBoost de demanda i XGBoost amb externes per renovables, la cobertura prevista és del "
+            + _fmt(xgb_external_balance["predicted_share_pct"], 1)
+            + "\\% i la generació no renovable necessària prevista és de "
+            + _fmt(xgb_external_balance["predicted_residual_gwh"], 2)
+            + " GWh per hora. El menor error en aquest residual correspon a \\textbf{"
+            + best_balance["model_name"]
+            + "} ("
+            + best_balance["feature_set"].lower()
+            + "), amb un MAE de "
+            + _fmt(best_balance["residual_mae_gwh"], 2)
+            + " GWh."
+        )
 
     return "\n".join(lines)
 
@@ -475,11 +683,20 @@ def main() -> None:
     if args.multiseed:
         payload = load_multiseed_payload()
         rows = extract_multiseed_rows(payload)
+        seeds = payload.get("seeds") or []
     else:
         payload = load_payload(args.seed)
         rows = extract_rows(payload)
+        seeds = [args.seed]
     dataset_stats = load_dataset_stats()
-    block = render_report_block(rows, dataset_stats, multiseed=args.multiseed, seeds=payload.get("seeds"))
+    operational_balance = load_operational_balance_rows([int(seed) for seed in seeds])
+    block = render_report_block(
+        rows,
+        dataset_stats,
+        operational_balance=operational_balance,
+        multiseed=args.multiseed,
+        seeds=seeds,
+    )
     update_main_report(block)
     print(f"Updated -> {MAIN_REPORT_TEX}")
 

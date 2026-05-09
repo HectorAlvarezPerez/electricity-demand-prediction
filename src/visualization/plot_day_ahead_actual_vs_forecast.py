@@ -1,5 +1,5 @@
 """
-Plot actual demand vs day-ahead forecasts on a short time window.
+Plot actual demand vs previous-day forecasts on a short time window.
 
 The figure is intended to complement the MAE benchmark with a temporal view of
 how much each forecast deviates from the realised demand.
@@ -22,11 +22,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.preprocess import feature_columns, normalize_data, target_columns
+from src.paths import FIGURES_DIR, MODELS_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 
-DATA_DIR = ROOT / "data" / "processed_long"
-FORECAST_DIR = ROOT / "data" / "raw" / "europe" / "forecast"
-MODELS_DIR = ROOT / "saved_models"
-FIGURES_DIR = ROOT / "docs" / "figures"
+DATA_DIR = PROCESSED_DATA_DIR
+FORECAST_DIR = RAW_DATA_DIR / "europe" / "forecast"
 
 RIDGE_PATH = MODELS_DIR / "baseline_ridge.joblib"
 XGB_PATH = MODELS_DIR / "baseline_xgb.json"
@@ -143,7 +142,7 @@ def main() -> None:
             merged["entsoe_forecast"],
             color="#1b9e77",
             linewidth=1.5,
-            label="ENTSO-E day-ahead",
+            label="ENTSO-E dia anterior",
         )
         ax.plot(
             merged["delivery_timestamp"],
@@ -172,7 +171,7 @@ def main() -> None:
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=4, frameon=True, bbox_to_anchor=(0.5, 0.01))
-    fig.suptitle("Comparativa temporal entre demanda real i prediccions day-ahead", fontsize=15, y=0.98)
+    fig.suptitle("Comparativa temporal entre demanda real i prediccions del dia anterior", fontsize=15, y=0.98)
     fig.tight_layout()
     fig.subplots_adjust(top=0.92, bottom=0.10)
 

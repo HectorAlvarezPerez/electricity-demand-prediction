@@ -1,10 +1,10 @@
 """
-Plot one grouped-bar chart comparing actual vs predicted day-ahead demand.
+Plot one grouped-bar chart comparing actual vs predicted next-day demand.
 
 For each country, the chart shows average delivered demand on the aligned
 evaluation timestamps for:
   - actual demand
-  - ENTSO-E day-ahead forecast
+  - ENTSO-E previous-day forecast
   - Ridge h=24
   - XGBoost h=24
 """
@@ -157,12 +157,12 @@ def main() -> None:
 
     fig, ax = plt.subplots(figsize=(13, 5.8))
     ax.bar(x - 1.5 * width, actual_vals, width=width, color="#222222", label="Demanda real")
-    ax.bar(x - 0.5 * width, entsoe_vals, width=width, color="#1b9e77", label="ENTSO-E day-ahead")
+    ax.bar(x - 0.5 * width, entsoe_vals, width=width, color="#1b9e77", label="ENTSO-E dia anterior")
     ax.bar(x + 0.5 * width, ridge_vals, width=width, color="#7570b3", label="Ridge h=24")
     ax.bar(x + 1.5 * width, xgb_vals, width=width, color="#1f78b4", label="XGBoost h=24")
 
     ax.set_ylabel("Demanda mitjana (MW)", fontsize=12)
-    ax.set_title("Comparativa day-ahead de demanda mitjana per país", fontsize=14)
+    ax.set_title("Comparativa de previsió del dia anterior de demanda mitjana per país", fontsize=14)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=10)
     ax.grid(axis="y", alpha=0.2)

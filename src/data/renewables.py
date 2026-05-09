@@ -9,7 +9,6 @@ import pandas as pd
 from src.data.preprocess import (
     ALL_CODES,
     COUNTRY_TIMEZONES,
-    WEATHER_FEATURES,
     TARGET_CODE,
     TRAIN_END,
     TRAIN_START,
@@ -68,7 +67,33 @@ DAILY_EXTERNAL_COLUMNS = [
     "wind_gusts_10m_max",
 ]
 
-HOURLY_EXTERNAL_COLUMNS = list(WEATHER_FEATURES)
+HOURLY_EXTERNAL_COLUMNS = [
+    "temperature_2m",
+    "relative_humidity_2m",
+    "precipitation",
+    "cloud_cover",
+    "shortwave_radiation",
+    "direct_radiation",
+    "diffuse_radiation",
+    "sunshine_duration",
+    "wind_speed_10m",
+    "wind_speed_100m",
+    "wind_gusts_10m",
+    "temp_daily_mean",
+    "temp_daily_max",
+    "temp_daily_min",
+    "precipitation_daily_sum",
+    "cloud_cover_daily_mean",
+    "shortwave_radiation_daily_mean",
+    "direct_radiation_daily_mean",
+    "diffuse_radiation_daily_mean",
+    "sunshine_duration_daily_sum",
+    "wind_speed_10m_daily_mean",
+    "wind_speed_10m_daily_max",
+    "wind_speed_100m_daily_mean",
+    "wind_speed_100m_daily_max",
+    "wind_gusts_10m_daily_max",
+]
 
 
 def target_columns() -> list[str]:

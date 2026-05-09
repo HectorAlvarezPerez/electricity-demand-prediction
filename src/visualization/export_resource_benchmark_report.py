@@ -176,10 +176,10 @@ def write_figure(rows: list[dict]) -> None:
 
     fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.2), constrained_layout=True)
     metrics = [
-        ("target_test_mae", "Target MAE", "#1f77b4"),
-        ("train_time_s", "Train time (s)", "#d62728"),
-        ("peak_rss_mb", "Peak RSS (MB)", "#2ca02c"),
-        ("target_inf_mean_ms", "Inference mean (ms)", "#ff7f0e"),
+        ("target_test_mae", "MAE objectiu", "#1f77b4"),
+        ("train_time_s", "Temps d'entrenament (s)", "#d62728"),
+        ("peak_rss_mb", "Pic RSS (MB)", "#2ca02c"),
+        ("target_inf_mean_ms", "Inferència mitjana (ms)", "#ff7f0e"),
     ]
 
     for ax, (key, title, color) in zip(axes.flat, metrics):
@@ -194,7 +194,7 @@ def write_figure(rows: list[dict]) -> None:
         for bar, val in zip(bars, vals):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), _fmt(val, 2), ha="center", va="bottom", fontsize=8)
 
-    fig.suptitle("Unified resource benchmark comparison", fontsize=14, weight="bold")
+    fig.suptitle("Comparativa unificada de recursos", fontsize=14, weight="bold")
     fig.savefig(OUT_FIG, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -210,51 +210,51 @@ def write_interval_figure(rows: list[dict]) -> None:
     width_source = [r["source_calib_mean_width_mw"] for r in rows]
     width_target = [r["target_calib_mean_width_mw"] for r in rows]
 
-    axes[0].bar(x - width / 2, coverage_source, width, label="Calibració source-val", color="#1f77b4")
-    axes[0].bar(x + width / 2, coverage_target, width, label="Calibració target-val", color="#ff7f0e")
+    axes[0].bar(x - width / 2, coverage_source, width, label="Validació font", color="#1f77b4")
+    axes[0].bar(x + width / 2, coverage_target, width, label="Validació objectiu", color="#ff7f0e")
     axes[0].axhline(95.0, color="#333333", linestyle="--", linewidth=1.0, label="Cobertura nominal 95%")
     axes[0].set_xticks(x, labels)
     axes[0].set_ylim(0, max(100.0, np.nanmax(coverage_source + coverage_target) * 1.08))
     axes[0].set_ylabel("Cobertura empírica (%)")
-    axes[0].set_title("Cobertura sobre target test")
+    axes[0].set_title("Cobertura sobre la prova objectiu")
     axes[0].grid(axis="y", alpha=0.25)
     axes[0].legend(fontsize=8)
 
-    axes[1].bar(x - width / 2, width_source, width, label="Calibració source-val", color="#1f77b4")
-    axes[1].bar(x + width / 2, width_target, width, label="Calibració target-val", color="#ff7f0e")
+    axes[1].bar(x - width / 2, width_source, width, label="Validació font", color="#1f77b4")
+    axes[1].bar(x + width / 2, width_target, width, label="Validació objectiu", color="#ff7f0e")
     axes[1].set_xticks(x, labels)
     axes[1].set_ylabel("Amplada mitjana (MW)")
     axes[1].set_title("Amplada dels intervals 95%")
     axes[1].grid(axis="y", alpha=0.25)
     axes[1].legend(fontsize=8)
 
-    fig.suptitle("Conformal prediction intervals on the target test split", fontsize=13, weight="bold")
+    fig.suptitle("Intervals conformals sobre la prova objectiu", fontsize=13, weight="bold")
     fig.savefig(OUT_INTERVAL_FIG, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
 def render_report_block(rows: list[dict], *, multiseed: bool = False, seeds: list[int] | None = None) -> str:
     lines: list[str] = []
-    lines.append("\\paragraph{Resultats del benchmark.}")
+    lines.append("\\paragraph{Resultats de la comparativa.}")
     if multiseed:
         seed_text = ", ".join(str(seed) for seed in seeds or [])
         lines.append(
-            "Les taules següents resumeixen el benchmark unificat amb robustesa estadística sobre tres llavors "
+            "Les taules següents resumeixen la comparativa unificada amb robustesa estadística sobre tres llavors "
             f"(\\texttt{{{seed_text}}}). Les mètriques principals es reporten com a mitjana $\\pm$ desviació estàndard; "
-            "a més, el MAE físic sobre el test objectiu incorpora un interval de confiança bootstrap al 95\\%. "
-            "Aquest protocol millora la solidesa empírica dels models neuronals, però no constitueix una prova de significança estadística exhaustiva."
+            "a més, el MAE en escala original sobre el conjunt de prova objectiu incorpora un interval de confiança bootstrap al 95\\%. "
+            "Aquesta presentació permet veure la variabilitat entre execucions, tot i que no substitueix una prova formal de significança estadística."
         )
     else:
         lines.append(
-            "Les taules següents resumeixen els resultats del benchmark unificat de recursos per als tres models avaluats. "
-            "La figura associada compara el cost d'entrenament, la memòria i la latència d'inferència amb l'error final sobre el test objectiu."
+            "Les taules següents resumeixen els resultats de la comparativa unificada de recursos per als tres models avaluats. "
+            "La figura associada compara el cost d'entrenament, la memòria i la latència d'inferència amb l'error final sobre el conjunt de prova objectiu."
         )
     lines.append("\\begin{figure}[htbp]")
     lines.append("    \\centering")
     lines.append("    \\includegraphics[width=0.96\\textwidth]{../figures/resource_benchmark_comparison.png}")
     lines.append(
-        "    \\caption{Comparativa del benchmark unificat de recursos per a XGBoost, MLP i GraphSAGE. "
-        "S'hi mostra el compromís entre error sobre el domini objectiu, temps d'entrenament, memòria i latència d'inferència.}"
+        "    \\caption{Comparativa unificada de recursos per a XGBoost, MLP i GraphSAGE. "
+        "S'hi comparen l'error sobre el domini objectiu, el temps d'entrenament, la memòria i la latència d'inferència.}"
     )
     lines.append("    \\label{fig:resource_benchmark_comparison}")
     lines.append("\\end{figure}")
@@ -262,64 +262,12 @@ def render_report_block(rows: list[dict], *, multiseed: bool = False, seeds: lis
 
     lines.append("\\paragraph{Intervals de predicció conformal.}")
     lines.append(
-        "A més de la predicció puntual, el benchmark calcula intervals de predicció conformal al 95\\% "
+        "A més de la predicció puntual, la comparativa calcula intervals de predicció conformal al 95\\% "
         "a partir dels residus absoluts de validació per cada horitzó de sortida. "
-        "La calibració amb \\texttt{source\\_val} conserva una lectura \\textit{zero-shot} estricta, "
-        "mentre que la calibració amb \\texttt{target\\_val} utilitza validació d'Espanya i dona una estimació "
-        "més operativa de la incertesa del domini objectiu, però ja no correspon a un protocol zero-shot pur."
+        "La calibració amb validació font (\\texttt{source\\_val}) manté l'escenari estricte de transferència directa, "
+        "mentre que la calibració amb validació d'Espanya (\\texttt{target\\_val}) dona una estimació "
+        "més operativa de la incertesa del domini objectiu. El detall quantitatiu d'aquests intervals es recull a l'Annex~\\ref{annex:resultats_addicionals}."
     )
-    lines.append("\\begin{figure}[htbp]")
-    lines.append("    \\centering")
-    lines.append("    \\includegraphics[width=0.96\\textwidth]{../figures/resource_benchmark_intervals.png}")
-    lines.append(
-        "    \\caption{Cobertura empírica i amplada mitjana dels intervals conformals al 95\\% sobre el test objectiu. "
-        "Es comparen les calibracions amb validació font i amb validació del domini objectiu.}"
-    )
-    lines.append("    \\label{fig:resource_benchmark_intervals}")
-    lines.append("\\end{figure}")
-    lines.append("\\FloatBarrier")
-
-    lines.append("\\begin{table}[htbp]")
-    lines.append("    \\centering")
-    lines.append("    \\small")
-    lines.append("    \\resizebox{0.98\\textwidth}{!}{%")
-    lines.append("    \\begin{tabular}{lrrrrrrr}")
-    lines.append("        \\toprule")
-    lines.append(
-        "        Model & Target MAE & Cov. source-val & Width source-val (MW) & Score source-val & Cov. target-val & Width target-val (MW) & Score target-val \\\\"
-    )
-    lines.append("        \\midrule")
-    for r in rows:
-        if multiseed:
-            target_mae = _fmt_pm(r["target_test_mae"], r["target_test_mae_std"])
-            source_cov = _fmt_pm(r["source_calib_coverage_95"] * 100.0, r["source_calib_coverage_95_std"] * 100.0, 2) + "\\%"
-            source_width = _fmt_pm(r["source_calib_mean_width_mw"], r["source_calib_mean_width_mw_std"], 1)
-            source_score = _fmt_pm(r["source_calib_interval_score_mw"], r["source_calib_interval_score_mw_std"], 1)
-            target_cov = _fmt_pm(r["target_calib_coverage_95"] * 100.0, r["target_calib_coverage_95_std"] * 100.0, 2) + "\\%"
-            target_width = _fmt_pm(r["target_calib_mean_width_mw"], r["target_calib_mean_width_mw_std"], 1)
-            target_score = _fmt_pm(r["target_calib_interval_score_mw"], r["target_calib_interval_score_mw_std"], 1)
-        else:
-            target_mae = _fmt(r["target_test_mae"])
-            source_cov = f"{_fmt(r['source_calib_coverage_95'] * 100.0, 2)}\\%"
-            source_width = _fmt(r["source_calib_mean_width_mw"], 1)
-            source_score = _fmt(r["source_calib_interval_score_mw"], 1)
-            target_cov = f"{_fmt(r['target_calib_coverage_95'] * 100.0, 2)}\\%"
-            target_width = _fmt(r["target_calib_mean_width_mw"], 1)
-            target_score = _fmt(r["target_calib_interval_score_mw"], 1)
-        lines.append(
-            f"        {r['model_name']} & {target_mae} & {source_cov} & {source_width} & {source_score} & "
-            f"{target_cov} & {target_width} & {target_score} \\\\"
-        )
-    lines.append("        \\bottomrule")
-    lines.append("    \\end{tabular}%")
-    lines.append("    }")
-    lines.append(
-        "    \\caption{Mètriques d'interval sobre el test objectiu. "
-        "La cobertura indica el percentatge de valors reals dins l'interval i l'amplada mitjana mesura el cost d'incertesa en MW.}"
-    )
-    lines.append("    \\label{tab:resource_benchmark_intervals}")
-    lines.append("\\end{table}")
-    lines.append("\\FloatBarrier")
 
     lines.append("\\begin{table}[htbp]")
     lines.append("    \\centering")
@@ -328,7 +276,7 @@ def render_report_block(rows: list[dict], *, multiseed: bool = False, seeds: lis
     lines.append("    \\begin{tabular}{lrrrrrrrrr}")
     lines.append("        \\toprule")
     lines.append(
-        "        Model & Target MAE & Target RMSE & Target MAPE & MAE MW IC95 & Train time (s) & Peak RSS (MB) & Inference mean (ms) & Throughput (samples/s) & Size (MB) \\\\"
+        "        Model & MAE objectiu & RMSE objectiu & MAPE objectiu & MAE MW IC95 & Temps entr. (s) & Pic RSS (MB) & Inferència mitjana (ms) & Mostres/s & Mida (MB) \\\\"
     )
     lines.append("        \\midrule")
     for r in rows:
@@ -361,38 +309,11 @@ def render_report_block(rows: list[dict], *, multiseed: bool = False, seeds: lis
     lines.append("    \\end{tabular}%")
     lines.append("    }")
     lines.append(
-        "    \\caption{Resum numèric del benchmark unificat de recursos i precisió sobre el test objectiu. "
-        "MAE i RMSE es mantenen en escala normalitzada; el MAPE i l'interval bootstrap del MAE es calculen en escala física. "
-        "Les mètriques de latència corresponen a la mitjana per batch i s'expressen en mil·lisegons.}"
+        "    \\caption{Resum numèric de la comparativa unificada de recursos i precisió sobre el conjunt de prova objectiu. "
+        "MAE i RMSE es mantenen en escala normalitzada; el MAPE i l'interval bootstrap del MAE es calculen en escala original. "
+        "Les mètriques de latència corresponen a la mitjana per lot i s'expressen en mil·lisegons.}"
     )
     lines.append("    \\label{tab:resource_benchmark_summary}")
-    lines.append("\\end{table}")
-    lines.append("\\FloatBarrier")
-
-    lines.append("\\begin{table}[htbp]")
-    lines.append("    \\centering")
-    lines.append("    \\small")
-    lines.append("    \\begin{tabular}{lccc}")
-    lines.append("        \\toprule")
-    lines.append("        Model & Source test MAE & Source test RMSE & Inference p95 (ms) \\\\")
-    lines.append("        \\midrule")
-    for r in rows:
-        if multiseed:
-            source_mae = _fmt_pm(r["source_test_mae"], r["source_test_mae_std"])
-            source_rmse = _fmt_pm(r["source_test_rmse"], r["source_test_rmse_std"])
-            p95 = _fmt_pm(r["target_inf_p95_ms"], r["target_inf_p95_ms_std"])
-        else:
-            source_mae = _fmt(r["source_test_mae"])
-            source_rmse = _fmt(r["source_test_rmse"])
-            p95 = _fmt(r["target_inf_p95_ms"])
-        lines.append(f"        {r['model_name']} & {source_mae} & {source_rmse} & {p95} \\\\")
-    lines.append("        \\bottomrule")
-    lines.append("    \\end{tabular}")
-    lines.append(
-        "    \\caption{Mètriques addicionals per completar la lectura del benchmark. "
-        "El p95 d'inferència ajuda a detectar pics de latència no visibles amb la mitjana.}"
-    )
-    lines.append("    \\label{tab:resource_benchmark_additional}")
     lines.append("\\end{table}")
     lines.append("\\FloatBarrier")
 

@@ -1,6 +1,6 @@
 # Predicció de demanda elèctrica i generació renovable
 
-Repositori del TFG sobre predicció horària de demanda elèctrica i generació renovable, amb Catalunya com a motivació principal i `ES` com a domini objectiu operatiu en la pipeline actual.
+Repositori del TFG sobre predicció horària de demanda elèctrica i generació renovable, amb `ES` com a domini objectiu operatiu en la pipeline actual.
 
 Títol de treball:
 `Prediccio de Demanda Electrica i Generacio Renovable amb Comparativa de Models`.
@@ -20,7 +20,6 @@ Per a cadascun d'ells s'avalua el millor baseline tabular (`XGBoost`) al costat 
 Actualment hi ha implementat:
 
 - descàrrega de demanda i generació des d’ENTSO-E,
-- descàrrega de demanda de Catalunya des de REE/ESIOS,
 - descàrrega de temperatura històrica i meteorologia enriquida des d’Open-Meteo,
 - preprocessat a format llarg amb lags explícits i horitzó de 24 hores (demanda),
 - preprocessat horari de generació renovable amb targets `solar_mwh`, `wind_mwh`, `hydro_mwh` i `renewable_total_mwh`,
@@ -35,8 +34,7 @@ Propers passos possibles:
 
 - afegir figures específiques del benchmark renovable,
 - automatitzar l'export de taules renovables al document de la mateixa manera que el benchmark de demanda,
-- estudiar fonts meteorològiques de forecast històric per substituir la proxy perfecta,
-- incorporar Catalunya com a domini target quan el pipeline de dades regional estigui complet.
+- estudiar fonts meteorològiques de forecast històric per substituir la proxy perfecta.
 
 Benchmark unificat de recursos per demanda:
 
@@ -94,7 +92,7 @@ Domini objectiu actual:
 
 - `ES`
 
-Punt important: tot i que el TFG està orientat a Catalunya, el codi d’entrenament i avaluació que hi ha implementat ara mateix treballa amb `ES` com a domini target. La part catalana existeix a la capa de descàrrega de dades, però encara no està integrada com a target final dins de la pipeline principal.
+El codi d'entrenament i avaluació treballa amb `ES` com a domini objectiu.
 
 ## Dataset processat
 
@@ -142,10 +140,7 @@ Crea un fitxer `.env` a l’arrel del repositori amb les credencials necessàrie
 
 ```env
 ENTSOE_TOKEN_KEY=el_teu_token_entsoe
-REE_TOKEN=el_teu_token_esios
 ```
-
-També s’accepta `ESIOS_TOKEN_KEY` com a alternativa a `REE_TOKEN`.
 
 ## Flux recomanat
 
@@ -160,21 +155,7 @@ Sortides:
 - `data/raw/europe/demand/entsoe_demand_{country}.csv`
 - `data/raw/europe/generation/entsoe_generation_{country}.csv`
 
-### 2. Descarregar demanda de Catalunya i alguns indicadors de generació
-
-```bash
-python src/data/download_esios.py
-```
-
-Sortides:
-
-- `data/raw/catalonia/demand/esios_demand_real.csv`
-- `data/raw/catalonia/demand/esios_demand_scheduled.csv`
-- fitxers addicionals sota `data/raw/catalonia/generation/`
-
-El valor per defecte del `start_year` ja està configurat per reconstruir històric des de `2015`.
-
-### 3. Descarregar meteorologia històrica
+### 2. Descarregar meteorologia històrica
 
 ```bash
 python src/data/download_weather.py
@@ -184,7 +165,7 @@ Sortida:
 
 - `data/raw/weather/weather_{country}.csv`
 
-### 4. Construir el dataset processat
+### 3. Construir el dataset processat
 
 ```bash
 python src/data/preprocess.py
@@ -196,7 +177,7 @@ Sortides:
 - `data/processed_long/val.parquet`
 - `data/processed_long/test.parquet`
 
-### 4b. Benchmark horari de renovables
+### 3b. Benchmark horari de renovables
 
 Objectiu:
 
@@ -365,7 +346,6 @@ Si no es defineix, `MLflow` farà servir la configuració per defecte.
 
 - `src/data/download_entsoe.py`: descàrrega de demanda i generació d’ENTSO-E.
 - `src/data/download_entsoe_forecast.py`: descàrrega del forecast day-ahead d’ENTSO-E.
-- `src/data/download_esios.py`: descàrrega de demanda i indicadors per a Catalunya.
 - `src/data/download_weather.py`: descàrrega de temperatura històrica des d’Open-Meteo.
 - `src/data/preprocess.py`: construcció del dataset final en format llarg.
 
@@ -386,7 +366,6 @@ Si no es defineix, `MLflow` farà servir la configuració per defecte.
 
 ## Limitacions conegudes
 
-- la pipeline principal encara no fa servir Catalunya com a domini target final,
 - no hi ha encara implementació d’OT ni de GNN,
 - no hi ha suite de tests automatitzada,
 - el projecte continua tenint estructura de codi de recerca, no de producte.
