@@ -50,4 +50,7 @@ mlflow.db
 
 
 artifacts/
+output/
+tmp/
+update_bolding.py
 AGENTS.md
