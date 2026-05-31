@@ -207,7 +207,7 @@ def _delta_text(rows: list[dict], model_name: str, metric: str) -> str:
     return f"manté {metric} sense canvis apreciables"
 
 
-def _load_demand_h1_predictions(seed: int) -> pd.DataFrame:
+def _load_demand_h24_predictions(seed: int) -> pd.DataFrame:
     path = METRICS_DIR / "resource_benchmark" / f"xgb_seed{seed}_prediction_intervals.parquet"
     if not path.exists():
         raise FileNotFoundError(f"Missing demand prediction intervals: {path}")
@@ -228,7 +228,7 @@ def _load_demand_h1_predictions(seed: int) -> pd.DataFrame:
         (frame["country_code"] == "ES")
         & (frame["split"] == "target_test")
         & (frame["calibration"] == "source_val")
-        & (frame["horizon"] == 1)
+        & (frame["horizon"] == 24)
     ].copy()
     frame = frame.rename(
         columns={
@@ -303,7 +303,7 @@ def _aggregate_balance(rows: list[dict[str, float]]) -> dict[str, float]:
 
 
 def load_operational_balance_rows(seeds: list[int]) -> tuple[dict[str, float], list[dict]]:
-    demand_by_seed = {seed: _load_demand_h1_predictions(seed) for seed in seeds}
+    demand_by_seed = {seed: _load_demand_h24_predictions(seed) for seed in seeds}
 
     observed_seed_rows = [
         _compute_balance_metrics(demand_by_seed[seed], _load_renewable_total_predictions(seed, "xgboost_external"))
@@ -352,8 +352,8 @@ def render_report_block(
         "canvia amb les condicions atmosfèriques i amb factors operatius que poden variar d'una hora a la següent."
     )
     lines.append(
-        "La tasca definida és una predicció horària a horitzó $H+1$. Per a cada país i hora $H$, el model rep informació "
-        "disponible fins a aquell instant i prediu els valors agregats de la següent hora. Els objectius són la generació "
+        "La tasca definida és una predicció horària a horitzó $H+24$. Per a cada país i hora $H$, el model rep informació "
+        "disponible fins a aquell instant i prediu els valors agregats vint-i-quatre hores després. Els objectius són la generació "
         "solar, eòlica, hidràulica i el total renovable. Com a nota metodològica, el percentatge renovable es deriva "
         "posteriorment a partir de la producció agregada i no s'entrena com una sortida pròpia del model."
     )
@@ -392,15 +392,15 @@ def render_report_block(
     )
     lines.append(r"\end{itemize}")
     lines.append(
-        "La informació externa s'alinea a l'hora objectiu $H+1$. Això equival a assumir una proxy perfecta d'una previsió meteorològica "
-        "a una hora vista, de manera coherent amb l'objectiu d'aïllar el valor potencial d'aquestes covariables sense introduir "
+        "La informació externa s'alinea a l'hora objectiu $H+24$. Això equival a assumir una proxy perfecta d'una previsió meteorològica "
+        "a vint-i-quatre hores vista, de manera coherent amb l'objectiu d'aïllar el valor potencial d'aquestes covariables sense introduir "
         "l'error propi d'un sistema meteorològic operatiu."
     )
     lines.append(
         "El protocol segueix el mateix criteri del cas de demanda: comparar XGBoost, MLP i GraphSAGE amb el mateix tall temporal, "
         "el mateix domini objectiu i les mateixes famílies de variables. Per separar l'efecte de la informació externa disponible, cada model "
         "s'avalua en dues configuracions: una només amb senyal temporal i autoregressiu, i una altra amb covariables meteorològiques "
-        "alineades amb l'horitzó $H+1$."
+        "alineades amb l'horitzó $H+24$."
     )
     if multiseed:
         seed_text = ", ".join(str(seed) for seed in seeds or [])
@@ -420,8 +420,8 @@ def render_report_block(
         + _fmt_int(dataset_stats["n_rows"])
         + "} mostres i \\textbf{"
         + _fmt_int(dataset_stats["n_cols"])
-        + "} columnes. Les particions es defineixen segons l'instant objectiu $H+1$; per això, en validació i prova, "
-        "l'entrada pot començar una hora abans del tall formal del període. El rang efectiu d'objectius va del "
+        + "} columnes. Les particions es defineixen segons l'instant objectiu $H+24$; per això, en validació i prova, "
+        "l'entrada pot començar vint-i-quatre hores abans del tall formal del període. El rang efectiu d'objectius va del "
         + _fmt_date(dataset_stats["target_min"])
         + " al "
         + _fmt_date(dataset_stats["target_max"])
@@ -568,8 +568,8 @@ def render_report_block(
 
         lines.append(r"\subsection{Balanç demanda-renovables}")
         lines.append(
-            "Per connectar la predicció renovable amb la necessitat real del sistema, es creua el total renovable $H+1$ amb la "
-            "predicció de demanda $H+1$ de la comparativa anterior. Com que la demanda es mesura com a potència mitjana horària, en "
+            "Per connectar la predicció renovable amb la necessitat real del sistema, es creua el total renovable $H+24$ amb la "
+            "predicció de demanda $H+24$ de la comparativa anterior. Com que la demanda es mesura com a potència mitjana horària, en "
             "aquest càlcul s'interpreta com energia equivalent d'una hora i es compara amb la generació renovable horària."
         )
         lines.append(r"\[")
