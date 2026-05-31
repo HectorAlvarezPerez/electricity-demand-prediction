@@ -12,6 +12,7 @@ import pandas as pd
 
 from src.data.renewables import (
     HOURLY_EXTERNAL_COLUMNS,
+    RENEWABLE_FORECAST_HORIZON_HOURS,
     add_calendar_features,
     add_country_dummies,
     add_hour_ahead_targets,
@@ -52,7 +53,9 @@ def load_hourly_weather(weather_dir: Path) -> pd.DataFrame:
 def attach_target_hour_weather(df: pd.DataFrame, weather_dir: Path) -> pd.DataFrame:
     weather = load_hourly_weather(weather_dir)
     out = df.copy()
-    out["weather_timestamp"] = pd.to_datetime(out["utc_timestamp"], utc=True) + pd.Timedelta(hours=1)
+    out["weather_timestamp"] = pd.to_datetime(out["utc_timestamp"], utc=True) + pd.Timedelta(
+        hours=RENEWABLE_FORECAST_HORIZON_HOURS
+    )
     out = out.merge(
         weather.rename(columns={"utc_timestamp": "weather_timestamp"}),
         on=["country_code", "weather_timestamp"],
@@ -61,7 +64,7 @@ def attach_target_hour_weather(df: pd.DataFrame, weather_dir: Path) -> pd.DataFr
     return out.drop(columns=["weather_timestamp"])
 
 
-# Backward-compatible alias while the repo moves from D+1 to H+1.
+# Backward-compatible alias while the repo moves from the old daily pipeline to hourly H+24.
 attach_target_day_weather = attach_target_hour_weather
 
 

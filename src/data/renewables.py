@@ -26,6 +26,8 @@ RENEWABLE_TARGET_COLS = [
     "renewable_total_mwh",
 ]
 
+RENEWABLE_FORECAST_HORIZON_HOURS = 24
+
 RENEWABLE_COMPONENT_COLS = [
     "solar_mwh",
     "wind_onshore_mwh",
@@ -264,13 +266,23 @@ def add_lag_features(
     return df
 
 
-def add_hour_ahead_targets(df: pd.DataFrame) -> pd.DataFrame:
+def add_forecast_horizon_targets(
+    df: pd.DataFrame,
+    horizon_hours: int = RENEWABLE_FORECAST_HORIZON_HOURS,
+) -> pd.DataFrame:
     df = df.copy().sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
-    grouped = df.groupby("country_code", group_keys=False)
-    for target in RENEWABLE_TARGET_COLS:
-        df[f"y_{target}"] = grouped[target].shift(-1)
-    df["target_timestamp"] = grouped["utc_timestamp"].shift(-1)
-    return df
+    df["target_timestamp"] = pd.to_datetime(df["utc_timestamp"], utc=True) + pd.Timedelta(hours=horizon_hours)
+    future = df[["country_code", "utc_timestamp", *RENEWABLE_TARGET_COLS]].rename(
+        columns={
+            "utc_timestamp": "target_timestamp",
+            **{target: f"y_{target}" for target in RENEWABLE_TARGET_COLS},
+        }
+    )
+    return df.merge(future, on=["country_code", "target_timestamp"], how="left")
+
+
+def add_hour_ahead_targets(df: pd.DataFrame) -> pd.DataFrame:
+    return add_forecast_horizon_targets(df)
 
 
 def add_country_dummies(df: pd.DataFrame) -> pd.DataFrame:
@@ -298,7 +310,7 @@ def load_all_generation_hourly(generation_dir: Path) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True).sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
 
 
-# Backward-compatible aliases while the repo finishes moving from D+1 to H+1.
+# Backward-compatible aliases while the repo finishes moving from the old daily pipeline to hourly H+24.
 aggregate_country_generation_daily = aggregate_country_generation_hourly
 add_day_ahead_targets = add_hour_ahead_targets
 split_by_target_date = split_by_target_timestamp
