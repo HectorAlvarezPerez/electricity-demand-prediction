@@ -344,8 +344,8 @@ def render_report_block(
     best_total = _best_row(rows, "total_mae")
 
     lines: list[str] = []
-    lines.append(r"\section{Predicció de generació renovable}")
-    lines.append(r"\subsection{Plantejament i diferències respecte a demanda}")
+    lines.append(r"\section{Predicció de Generació Renovable}")
+    lines.append(r"\subsection{Plantejament i Diferències Respecte a Demanda}")
     lines.append(
         "El segon cas d'estudi aplica el mateix marc experimental a una tasca amb una dependència física més directa. "
         "Mentre que la demanda elèctrica està molt marcada pel calendari i per la inèrcia autoregressiva, la generació renovable "
@@ -362,10 +362,10 @@ def render_report_block(
         "físics diferents, de manera que la configuració externa incorpora un paquet meteorològic més ampli que en demanda: temperatura, "
         "humitat, precipitació, nuvolositat, radiació solar, durada d'insolació i vent a 10 i 100 metres, juntament amb agregats diaris "
         "coherents amb aquestes variables. Amb aquesta configuració es pot veure fins a quin punt la meteorologia afegeix informació "
-        "sobre els lags, les mitjanes mòbils i el calendari."
+        "sobre els desfasaments, les mitjanes mòbils i el calendari."
     )
 
-    lines.append(r"\subsection{Dades, variables i protocol experimental}")
+    lines.append(r"\subsection{Dades, Variables i Protocol Experimental}")
     lines.append(
         "Les dades de generació provenen d'ENTSO-E, concretament de les sèries d'\\textit{Actual Generation per Production Type}. "
         "Cada registre horari o subhorari de potència es transforma primer a energia amb la durada real de l'interval, i "
@@ -385,7 +385,7 @@ def render_report_block(
         "els altres set països com a dominis font. Els models s'entrenen només sobre fonts i s'avaluen en transferència directa sobre Espanya."
     )
     lines.append(r"\begin{itemize}")
-    lines.append(r"    \item \textbf{Sense variables externes:} valors actuals, lags horaris, mitjanes mòbils, calendari local i país.")
+    lines.append(r"    \item \textbf{Sense variables externes:} valors actuals, desfasaments horaris, mitjanes mòbils, calendari local i país.")
     lines.append(
         r"    \item \textbf{Amb variables externes:} les mateixes variables més covariables d'Open-Meteo sobre temperatura, "
         r"humitat, precipitació, nuvolositat, radiació, insolació i vent, agregades per país i alineades amb l'hora objectiu."
@@ -428,7 +428,7 @@ def render_report_block(
         + "."
     )
 
-    lines.append(r"\subsection{Resultats i interpretació}")
+    lines.append(r"\subsection{Resultats i Interpretació}")
     lines.append(
         "La Taula~\\ref{tab:renewables_target_metrics} mostra l'error absolut mitjà sobre Espanya en escala física. "
         "A diferència de la demanda, aquí es reporten els objectius per separat perquè cadascuna de les tecnologies respon "
@@ -491,8 +491,8 @@ def render_report_block(
     lines.append(
         "Això suggereix que l'efecte del paquet meteorològic depèn fortament de l'objectiu i del model. En XGBoost, afegir variables externes "
         f"millora la solar, l'eòlica i el total renovable; en GraphSAGE redueix lleugerament el MAE del total renovable però empitjora altres "
-        f"objectius; en MLP, en canvi, el total no millora tot i que la solar sí que es beneficia de la informació externa. "
-        "Per tant, les variables externes no s'han d'interpretar com un guany universal, sinó com una informació addicional que modifica el rànquing en alguns objectius."
+        f"objectius; en MLP, en canvi, les variables externes no aporten cap millora agregada: tant la solar com el total empitjoren respecte de la configuració sense externes. "
+        "Per tant, les variables externes no s'han d'interpretar com un guany universal, sinó com una informació addicional que modifica la classificació en alguns objectius."
     )
 
     lines.append(
@@ -547,16 +547,16 @@ def render_report_block(
         "En conjunt, la complexitat arquitectònica no es tradueix automàticament en un millor resultat pràctic. "
         "XGBoost continua essent el referent global quan es mira el total renovable i el cost, perquè combina el millor MAE agregat "
         f"({best_total['feature_set'].lower()}) amb un temps d'entrenament molt inferior al de les alternatives neuronals. La MLP manté la "
-        "inferència més lleugera i excel·leix en solar sense externes, però no domina el total. GraphSAGE millora respecte a la seva "
+        "inferència més lleugera, però no supera l'XGBoost en cap objectiu i no domina el total. GraphSAGE millora respecte a la seva "
         "variant sense externes en el total renovable i queda competitiu en alguns objectius, però ho fa amb una latència i un cost d'entrenament clarament més alts."
     )
     lines.append(
         "El cas renovable matisa el que s'havia observat en demanda. Quan l'objectiu depèn més directament de factors físics, un "
-        "paquet meteorològic més ric pot modificar el rànquing segons la tecnologia, però el seu efecte no és uniforme. En aquest escenari, "
+        "paquet meteorològic més ric pot modificar la classificació segons la tecnologia, però el seu efecte no és uniforme. En aquest escenari, "
         "l'XGBoost continua sent la referència més sòlida sobre el total renovable."
     )
     lines.append(
-        "La MLP aprofita bé el patró solar, GraphSAGE no transforma la informació meteorològica en un guany uniforme, i XGBoost manté "
+        "La MLP no treu profit de la meteorologia, ja que empitjora en afegir-la; GraphSAGE no transforma la informació meteorològica en un guany uniforme, i XGBoost manté "
         "el millor equilibri entre precisió agregada i cost. El resultat és coherent amb el criteri general del treball: una arquitectura "
         "més complexa només és preferible si el guany és prou estable per compensar l'increment de recursos."
     )
@@ -566,7 +566,7 @@ def render_report_block(
         best_balance = min(balance_rows, key=lambda row: row["residual_mae_gwh"])
         xgb_external_balance = next(row for row in balance_rows if row["key"] == "xgboost_external")
 
-        lines.append(r"\subsection{Balanç demanda-renovables}")
+        lines.append(r"\subsection{Balanç Demanda-Renovables}")
         lines.append(
             "Per connectar la predicció renovable amb la necessitat real del sistema, es creua el total renovable $H+24$ amb la "
             "predicció de demanda $H+24$ de la comparativa anterior. Com que la demanda es mesura com a potència mitjana horària, en "
@@ -579,7 +579,7 @@ def render_report_block(
         lines.append(r"\end{aligned}")
         lines.append(r"\]")
         lines.append(
-            "Aquesta taula no substitueix les mètriques de predicció anteriors; les tradueix a una pregunta operativa: "
+            r"La Taula~\ref{tab:renewables_operational_balance} no substitueix les mètriques de predicció anteriors; les tradueix a una pregunta operativa: "
             "quanta demanda quedaria per cobrir amb generació no renovable o altres recursos gestionables si es prenguessin "
             "les prediccions com a base de programació."
         )
