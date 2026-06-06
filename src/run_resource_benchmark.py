@@ -267,13 +267,6 @@ def main() -> None:
         _log(f"[Runner] Multi-seed JSON written: {multiseed_json}")
         _log(f"[Runner] Multi-seed CSV written: {multiseed_csv}")
 
-    _log("[Runner] Exporting results to existing report section")
-    export_args = ["--multiseed"] if len(seeds) > 1 else ["--seed", str(seeds[0])]
-    run_script(
-        ROOT / "src" / "visualization" / "export_resource_benchmark_report.py",
-        export_args,
-    )
-
     total_elapsed = time.perf_counter() - run_t0
     _log(f"[Runner] Unified benchmark completed in {total_elapsed/60.0:.1f} min")
 
