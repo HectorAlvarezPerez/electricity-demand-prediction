@@ -64,10 +64,6 @@ def attach_target_hour_weather(df: pd.DataFrame, weather_dir: Path) -> pd.DataFr
     return out.drop(columns=["weather_timestamp"])
 
 
-# Backward-compatible alias while the repo moves from the old daily pipeline to hourly H+24.
-attach_target_day_weather = attach_target_hour_weather
-
-
 def build_dataset(
     generation_dir: Path,
     *,

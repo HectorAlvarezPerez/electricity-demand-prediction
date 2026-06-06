@@ -308,10 +308,3 @@ def load_all_generation_hourly(generation_dir: Path) -> pd.DataFrame:
             raise FileNotFoundError(path)
         parts.append(aggregate_country_generation_hourly(load_generation_csv(path), code))
     return pd.concat(parts, ignore_index=True).sort_values(["country_code", "utc_timestamp"]).reset_index(drop=True)
-
-
-# Backward-compatible aliases while the repo finishes moving from the old daily pipeline to hourly H+24.
-aggregate_country_generation_daily = aggregate_country_generation_hourly
-add_day_ahead_targets = add_hour_ahead_targets
-split_by_target_date = split_by_target_timestamp
-load_all_generation_daily = load_all_generation_hourly
