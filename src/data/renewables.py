@@ -55,20 +55,6 @@ RENEWABLE_TECH_PREFIXES = {
 DEFAULT_RENEWABLE_LAGS = [1, 2, 24, 48, 168]
 DEFAULT_RENEWABLE_ROLL_WINDOWS = [24, 168]
 
-DAILY_EXTERNAL_COLUMNS = [
-    "temperature_2m_mean",
-    "temperature_2m_max",
-    "temperature_2m_min",
-    "shortwave_radiation_sum",
-    "daylight_duration",
-    "sunshine_duration",
-    "cloud_cover_mean",
-    "precipitation_sum",
-    "wind_speed_100m_mean",
-    "wind_speed_100m_max",
-    "wind_gusts_10m_max",
-]
-
 HOURLY_EXTERNAL_COLUMNS = [
     "temperature_2m",
     "relative_humidity_2m",
